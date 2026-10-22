@@ -204,6 +204,11 @@ block (e.g. "host sync dominates", "allocation overhead dominates").
 
 ---
 
+## Related
+
+- [infer-rsi](https://github.com/wangzhao-11a/infer-rsi) — experiment ledger and statistical gate for service-level inference tuning.
+- [agent-harness](https://github.com/wangzhao-11a/agent-harness) — zero-dependency harness runtime for LLM agents.
+
 ## License
 
 Apache-2.0 — see `LICENSE`.
