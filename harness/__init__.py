@@ -1,0 +1,1 @@
+"""Evaluation harness for kernel/operator optimization tasks (stage 0 + 1 skeleton)."""

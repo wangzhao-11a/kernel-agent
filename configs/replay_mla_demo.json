@@ -1,0 +1,17 @@
+{
+  "comment": "demo: MLA concat-trick solution, profiling enabled to show the op breakdown fed back to the agent",
+  "responses": [
+    {
+      "action": "write_solution",
+      "content": "\"\"\"Starting-point solution for mla_attention (torch; the agent must beat this on Ascend).\n\nUses the concat trick (q_cat = [q_nope | q_pe], k_cat = [k_nope | k_pe]) so the score path\nis one batched matmul — but still materializes k_nope/v, so absorption is left as the\noptimization for the agent.\n\"\"\"\nimport math\n\nimport torch\n\n\ndef run(x, w_q_nope, w_q_pe, w_dkv, w_kr, w_uk, w_uv):\n    heads, dn, dv = 8, 64, 64\n    dr = w_kr.shape[-1]\n    q_nope = (x @ w_q_nope).view(-1, heads, dn)\n    q_pe = (x @ w_q_pe).view(-1, heads, dr)\n    c_kv = x @ w_dkv\n    k_pe = x @ w_kr\n    k_nope = (c_kv @ w_uk).view(-1, heads, dn)\n    v = (c_kv @ w_uv).view(-1, heads, dv)\n\n    q_cat = torch.cat([q_nope, q_pe], dim=-1).transpose(0, 1)                    # (H,T,dn+dr)\n    k_cat = torch.cat([k_nope, k_pe.unsqueeze(1).expand(-1, heads, -1)], dim=-1).transpose(0, 1)\n    scores = (q_cat @ k_cat.transpose(-1, -2)) / math.sqrt(dn + dr)\n    probs = torch.softmax(scores, dim=-1)\n    return torch.einsum(\"hij,jhd->ihd\", probs, v)",
+      "strategies": [
+        "block tiling"
+      ],
+      "expected_speedup": 1.2
+    },
+    {
+      "action": "finish",
+      "summary": "demo: MLA solution profiled"
+    }
+  ]
+}

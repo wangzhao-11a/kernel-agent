@@ -1,0 +1,16 @@
+{
+  "provider": "openai",
+  "model": "deepseek-chat",
+  "base_url": "https://api.deepseek.com/v1",
+  "api_key_env": "DEEPSEEK_API_KEY",
+  "temperature": 0.2,
+  "max_iters": 12,
+  "target_speedup": 1.0,
+  "_alternatives": {
+    "qwen": {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus", "api_key_env": "DASHSCOPE_API_KEY"},
+    "kimi": {"base_url": "https://api.moonshot.cn/v1", "model": "kimi-k2-0905-preview", "api_key_env": "MOONSHOT_API_KEY"},
+    "glm": {"base_url": "https://open.bigmodel.cn/api/paas/v4", "model": "glm-4.6", "api_key_env": "ZHIPUAI_API_KEY"},
+    "siliconflow": {"base_url": "https://api.siliconflow.cn/v1", "model": "deepseek-ai/DeepSeek-V3", "api_key_env": "SILICONFLOW_API_KEY"},
+    "local_vllm": {"base_url": "http://127.0.0.1:8000/v1", "model": "your-served-model", "api_key_env": "KERNEL_AGENT_API_KEY"}
+  }
+}

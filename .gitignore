@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+.env
+runs/
+dashboard/*.html
+rsi/knowledge/.memory.lock
+*.log

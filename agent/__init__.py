@@ -1,0 +1,1 @@
+"""Minimal kernel-optimization agent (reference implementation of the stage-1 loop)."""

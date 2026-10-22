@@ -1,0 +1,9 @@
+numpy>=1.24
+
+# torch is required for the built-in tasks and for real benchmarking:
+#   CPU build (any OS):          pip install torch
+#   CUDA build (Linux/Windows):  pip install torch --index-url https://download.pytorch.org/whl/cu129
+#   Ascend 910B server:          install the torch + torch_npu pair matching your CANN version
+#
+# Optional:
+#   triton   # Linux + NVIDIA/AMD GPU, for the Triton solution template
