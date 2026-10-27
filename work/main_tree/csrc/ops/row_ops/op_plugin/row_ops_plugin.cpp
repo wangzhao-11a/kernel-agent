@@ -126,6 +126,8 @@ torch::Tensor rms_norm_npu(const torch::Tensor &x, const torch::Tensor &gamma, d
     const bool batched = v3 && (cols < 64 || cols % 64 == 0) && (cols / 8) <= 255 &&
                          (cols * es) % 32 == 0 && (tile3 / cols) >= 2;
     const bool fullRow = v4 && !batched && cols > tile && rms_full_row_fits(cols, es);
+    // v3 rstd broadcast instead of one Muls per row (KAG_RMS_BC=0 for the old A/B).
+    const bool bcast = env_on("KAG_RMS_BC", true);
     auto stream = c10_npu::getCurrentNPUStream().stream(false);
     auto xp = (GM_ADDR)xc.data_ptr();
     auto gp = (GM_ADDR)g.data_ptr();
@@ -133,15 +135,15 @@ torch::Tensor rms_norm_npu(const torch::Tensor &x, const torch::Tensor &gamma, d
     const float eps = static_cast<float>(epsilon);
     at_npu::native::OpCommand::RunOpApi("RmsNorm", [=]() -> int {
     switch (xc.scalar_type()) {
-        case torch::kFloat32: if (batched) launch_rms_norm3_float(xp, gp, yp, rows, cols, tile3, eps, stream);
+        case torch::kFloat32: if (batched) launch_rms_norm3_float(xp, gp, yp, rows, cols, tile3, eps, bcast ? 1 : 0, stream);
                               else if (fullRow) launch_rms_norm4_float(xp, gp, yp, rows, cols, cols, eps, stream);
                               else if (v2) launch_rms_norm2_float(xp, gp, yp, rows, cols, tile, eps, stream);
                               else launch_rms_norm_float(xp, gp, yp, rows, cols, tile, eps, stream); break;
-        case torch::kFloat16: if (batched) launch_rms_norm3_half(xp, gp, yp, rows, cols, tile3, eps, stream);
+        case torch::kFloat16: if (batched) launch_rms_norm3_half(xp, gp, yp, rows, cols, tile3, eps, bcast ? 1 : 0, stream);
                               else if (fullRow) launch_rms_norm4_half(xp, gp, yp, rows, cols, cols, eps, stream);
                               else if (v2) launch_rms_norm2_half(xp, gp, yp, rows, cols, tile, eps, stream);
                               else launch_rms_norm_half(xp, gp, yp, rows, cols, tile, eps, stream); break;
-        case torch::kBFloat16: if (batched) launch_rms_norm3_bf16(xp, gp, yp, rows, cols, tile3, eps, stream);
+        case torch::kBFloat16: if (batched) launch_rms_norm3_bf16(xp, gp, yp, rows, cols, tile3, eps, bcast ? 1 : 0, stream);
                               else if (fullRow) launch_rms_norm4_bf16(xp, gp, yp, rows, cols, cols, eps, stream);
                               else if (v2) launch_rms_norm2_bf16(xp, gp, yp, rows, cols, tile, eps, stream);
                               else launch_rms_norm_bf16(xp, gp, yp, rows, cols, tile, eps, stream); break;

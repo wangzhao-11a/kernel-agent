@@ -16,7 +16,7 @@
   "hardware": "ascend-910b",
   "baseline": "torch_rms_norm",
   "metric_key": "speedup",
-  "expected_speedup": 4.0,
+  "expected_speedup": 4.5,
   "metadata": {
     "op": "rms_norm",
     "op_class": "reduction",
@@ -28,8 +28,8 @@
     "bench_cases": 14,
     "bench_metric": "geomean",
     "bench_runs": 3,
-    "reference_speedup": 3.960,
-    "reference_total_speedup": 3.731,
-    "reference_worst_speedup": 1.753
+    "reference_speedup": 4.366,
+    "reference_total_speedup": 4.288,
+    "reference_worst_speedup": 2.658
   }
 }

@@ -427,7 +427,7 @@ __global__ __aicore__ void rms_norm2_kernel(GM_ADDR x, GM_ADDR gamma, GM_ADDR y,
 // PIPE_ALL barrier. Only selected for 32B-aligned rows with cols/8 <= 255 (repeat stride is u8).
 template <typename T>
 __global__ __aicore__ void rms_norm3_kernel(GM_ADDR x, GM_ADDR gamma, GM_ADDR y, int64_t rows, int64_t cols,
-                                            int64_t tile, float eps)
+                                            int64_t tile, float eps, int64_t useBcast)
 {
     AscendC::TPipe pipe;
     constexpr int64_t kMaxRows = 128;
@@ -521,10 +521,19 @@ __global__ __aicore__ void rms_norm3_kernel(GM_ADDR x, GM_ADDR gamma, GM_ADDR y,
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Div(rstd, red, rstd, static_cast<int32_t>(rh));
         KAG_V_S();
-        for (int64_t i = 0; i < rh; ++i) {
-            float rv = rstd.GetValue(static_cast<int32_t>(i));
-            KAG_S_V();
-            AscendC::Muls(xf[i * cols], xf[i * cols], rv, static_cast<int32_t>(cols));
+        if (useBcast) {
+            // A/B alternative: expand [rh,1] -> [rh,cols] once, then one contiguous Mul.
+            uint32_t dstShape[2] = {static_cast<uint32_t>(rh), static_cast<uint32_t>(cols)};
+            uint32_t srcShape[2] = {static_cast<uint32_t>(rh), 1};
+            AscendC::BroadCast<float, 2, 1>(sq, rstd, dstShape, srcShape);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(xf, xf, sq, static_cast<int32_t>(rh * cols));
+        } else {
+            for (int64_t i = 0; i < rh; ++i) {
+                float rv = rstd.GetValue(static_cast<int32_t>(i));
+                KAG_S_V();
+                AscendC::Muls(xf[i * cols], xf[i * cols], rv, static_cast<int32_t>(cols));
+            }
         }
         // gamma is identical for every row: one strided Mul per 64-column group reuses
         // the same gamma block across rows (src1RepStride=0). For tall tiles this
@@ -1647,9 +1656,9 @@ RMS2_LAUNCH_DEF(half, half)
 
 #define RMS3_LAUNCH_DEF(SUF, TN)                                                                             \
     void launch_rms_norm3_##SUF(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile,      \
-                                float eps, void *stream)                                                       \
+                                float eps, int64_t useBcast, void *stream)                                     \
     {                                                                                                         \
-        rms_norm3_kernel<TN><<<kag_block_num(), nullptr, stream>>>(x, g, y, rows, cols, tile, eps);                          \
+        rms_norm3_kernel<TN><<<kag_block_num(), nullptr, stream>>>(x, g, y, rows, cols, tile, eps, useBcast);               \
     }
 RMS3_LAUNCH_DEF(bf16, bfloat16_t)
 RMS3_LAUNCH_DEF(float, float)

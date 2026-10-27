@@ -28,9 +28,9 @@ void launch_argmax_axis_i32(GM_ADDR x, GM_ADDR idx, int64_t O, int64_t K, int64_
 void launch_rms_norm2_float(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, void *stream);
 void launch_rms_norm2_bf16(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, void *stream);
 void launch_rms_norm2_half(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, void *stream);
-void launch_rms_norm3_float(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, void *stream);
-void launch_rms_norm3_bf16(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, void *stream);
-void launch_rms_norm3_half(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, void *stream);
+void launch_rms_norm3_float(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, int64_t useBcast, void *stream);
+void launch_rms_norm3_bf16(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, int64_t useBcast, void *stream);
+void launch_rms_norm3_half(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, int64_t useBcast, void *stream);
 void launch_rms_norm4_float(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, void *stream);
 void launch_rms_norm4_bf16(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, void *stream);
 void launch_rms_norm4_half(GM_ADDR x, GM_ADDR g, GM_ADDR y, int64_t rows, int64_t cols, int64_t tile, float eps, void *stream);
