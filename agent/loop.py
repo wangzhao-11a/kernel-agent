@@ -113,6 +113,17 @@ def _memory_pseudo(result: dict) -> dict:
     }
 
 
+def _error_signature(result: dict) -> str:
+    """Stable signature for repeated-failure detection (strip PIDs/timestamps)."""
+    raw = str(result.get("error") or "").strip()
+    if not raw:
+        return ""
+    lines = [ln for ln in raw.splitlines() if ln.strip()][:2]
+    text = " | ".join(lines)
+    text = re.sub(r"\[PID:\d+\]|\[\d{4}-\d\d-\d\d[^\]]*\]", "", text)
+    return " ".join(text.split())[:300]
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="agent.loop", description="Kernel optimization agent loop with RSI.")
     ap.add_argument("--task", required=True)
@@ -156,6 +167,8 @@ def main(argv=None) -> int:
     ap.add_argument("--strict-provenance", action="store_true",
                     help="refuse to update performance evidence when device != claimed hardware "
                          "(e.g. CPU mechanics run labelled ascend-910b)")
+    ap.add_argument("--max-repeat-errors", type=int, default=3,
+                    help="stop after N consecutive attempts with the same error signature (0 disables)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
 
@@ -295,8 +308,13 @@ def main(argv=None) -> int:
                 "out_dir": res.get("out_dir")}
         return text, meta
 
+    repeat_sig = ""
+    repeat_count = 0
+    repeat_stop = False
+    max_repeat_errors = int(args.max_repeat_errors or 0)
+
     def evaluate(path: str, it: int, declared, expected) -> str:
-        nonlocal passed_count
+        nonlocal passed_count, repeat_sig, repeat_count, repeat_stop
         result = run_evaluation(
             task=args.task, solution=path, device=args.device, timeout=args.timeout,
             warmup=args.warmup, rep=args.rep, trials=args.trials,
@@ -308,6 +326,26 @@ def main(argv=None) -> int:
         log("harness", summary, meta={"iteration": it, "status": result.get("status")})
         status = result.get("status") or "unknown"
         speedup = float((result.get("timing") or {}).get("speedup") or 0.0)
+        repeat_note = ""
+        if status != "pass" and max_repeat_errors > 0:
+            sig = _error_signature(result)
+            if sig:
+                if sig == repeat_sig:
+                    repeat_count += 1
+                else:
+                    repeat_sig, repeat_count = sig, 1
+                if repeat_count >= 2:
+                    repeat_note = (
+                        "REPEATED FAILURE: the same error signature has occurred %d consecutive "
+                        "attempts:\n%s\nDo NOT submit another version with the same shape/axis "
+                        "logic. Re-derive the tensor shapes on paper, switch strategy, or finish."
+                        % (repeat_count, sig)
+                    )
+                if repeat_count >= max_repeat_errors:
+                    repeat_stop = True
+                    repeat_note += "\nStopping: the same failure repeated %d times." % repeat_count
+        else:
+            repeat_sig, repeat_count = "", 0
 
         resolved = []
         if use_rsi:
@@ -364,6 +402,8 @@ def main(argv=None) -> int:
             best.update(status=status, speedup=speedup, path=path, uses_triton=uses_kernel)
 
         hints = failure_hints(matched, attempted_ids) if (use_rsi and status != "pass") else ""
+        if repeat_note:
+            hints = (hints + "\n\n" + repeat_note).strip()
         return build_feedback(iteration=it, status=status, summary=summary, speedup=speedup,
                               best=best, hints=hints, profiling=profile_text)
 
@@ -466,6 +506,10 @@ def main(argv=None) -> int:
 
         messages.append({"role": "user", "content": message})
         log("user", message)
+
+        if repeat_stop:
+            log("system", "stopping: repeated failure %d times" % repeat_count)
+            break
 
         if best["status"] == "pass" and best["speedup"] >= target and not args.keep_going:
             log("system", "target speedup %.2fx reached (best %.3fx) -> stopping" % (target, best["speedup"]))

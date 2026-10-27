@@ -845,7 +845,7 @@ class MemoryStore:
 
         hits.sort(key=lambda h: -h["score"])
         per_type = {}
-        limits = {"fact": 8, "failure": 3, "skill": 2, "strategy": 3}
+        limits = {"fact": 16, "failure": 4, "skill": 3, "strategy": 4}
         out = []
         for hit in hits:
             if kinds and hit["type"] not in kinds:
@@ -858,7 +858,7 @@ class MemoryStore:
             out.append(hit)
         return out
 
-    def context(self, features: dict, top_k: int = 3, max_chars: int = 7000, kinds=None) -> str:
+    def context(self, features: dict, top_k: int = 3, max_chars: int = 10000, kinds=None) -> str:
         hits = self.retrieve(features, top_k=top_k, kinds=kinds)
         features = normalize_features(features)
         if not hits:
@@ -872,8 +872,8 @@ class MemoryStore:
                     or record.get("name") or record.get("statement") or "")
             if kind == "strategy":
                 what = record.get("statement") or ""
-            if len(what) > 260:
-                what = what[:260] + "…"
+            if len(what) > 500:
+                what = what[:500] + "…"
             lines.append("- [%s %s] (%s) %s" % (
                 labels[kind], hit["id"],
                 record.get("confidence") or record.get("status") or "candidate", what))

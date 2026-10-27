@@ -1,0 +1,27 @@
+{
+  "id": "swiglu_ascendc_950",
+  "description": "CannBench L1 SwiGlu on Ascend 950PR: out = silu(x0) * x1 with x0, x1 = input.chunk(2, dim). Official cases cover dim in {-1,0,1,2}, 1-5D, prime/odd sizes, fp16/fp32/bf16, +-inf and NaN.",
+  "package": "../../work/main_tree",
+  "edit_files": [
+    "csrc/ops/swiglu/op_kernel/swiglu_kernel.cpp",
+    "csrc/ops/swiglu/op_kernel/swiglu_launch.h",
+    "csrc/ops/swiglu/op_plugin/swiglu_plugin.cpp"
+  ],
+  "build_command": ["bash", "build.sh", "--soc=ascend950", "--ops=swiglu", "--install"],
+  "test_command": ["python3", "tests/test_swiglu_official.py"],
+  "bench_command": null,
+  "profile_command": ["python3", "tests/profile_swiglu.py"],
+  "timeout_s": 900,
+  "soc": "ascend950",
+  "hardware": "ascend-950pr",
+  "baseline": "npu_swiglu",
+  "metric_key": "speedup",
+  "expected_speedup": 1.0,
+  "metadata": {
+    "op": "swi_glu",
+    "op_class": "elementwise",
+    "dtypes": ["float16", "float32", "bfloat16"],
+    "tags": ["cannbench", "ascendc", "swiglu", "950pr"],
+    "official_cases": 20
+  }
+}

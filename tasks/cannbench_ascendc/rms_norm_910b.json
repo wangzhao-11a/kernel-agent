@@ -1,0 +1,35 @@
+{
+  "id": "rms_norm_ascendc_910b",
+  "description": "CannBench RMSNorm on Ascend 910B: out = x * rsqrt(mean(x^2, last) + eps) * gamma, fp16/fp32/bf16, last dim 8..16384 and rows 1..100000. 6 official + 13 edge correctness cases, plus a 14-case benchmark whose primary metric is the per-case geometric mean. Default v3 batches up to 64 rows per UB tile for 32B-aligned rows; v2 is the per-row fallback. Build row_ops plus layout_ops (link dependency).",
+  "package": "../../work/main_tree",
+  "edit_files": [
+    "csrc/ops/row_ops/op_kernel/row_ops_kernel.cpp",
+    "csrc/ops/row_ops/op_kernel/row_ops_launch.h",
+    "csrc/ops/row_ops/op_plugin/row_ops_plugin.cpp"
+  ],
+  "build_command": ["bash", "build.sh", "--soc=ascend910b", "--ops=row_ops,layout_ops", "--install"],
+  "test_command": ["python3", "tests/test_rms_norm_official.py"],
+  "bench_command": ["python3", "tests/bench_rms_norm.py"],
+  "profile_command": ["python3", "tests/profile_rms_norm.py"],
+  "timeout_s": 900,
+  "soc": "ascend910b",
+  "hardware": "ascend-910b",
+  "baseline": "torch_rms_norm",
+  "metric_key": "speedup",
+  "expected_speedup": 4.0,
+  "metadata": {
+    "op": "rms_norm",
+    "op_class": "reduction",
+    "dtypes": ["float16", "float32", "bfloat16"],
+    "tags": ["cannbench", "ascendc", "rms_norm", "row_ops", "910b"],
+    "official_cases": 6,
+    "edge_cases": 13,
+    "edge_test_command": ["python3", "tests/test_rms_norm_edges.py"],
+    "bench_cases": 14,
+    "bench_metric": "geomean",
+    "bench_runs": 3,
+    "reference_speedup": 3.846,
+    "reference_total_speedup": 3.600,
+    "reference_worst_speedup": 1.766
+  }
+}

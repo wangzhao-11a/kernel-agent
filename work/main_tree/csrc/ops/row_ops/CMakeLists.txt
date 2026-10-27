@@ -1,0 +1,12 @@
+set(KERNEL_SRCS
+    ${CMAKE_CURRENT_SOURCE_DIR}/op_kernel/row_ops_kernel.cpp
+)
+set(PLUGIN_SRCS
+    ${CMAKE_CURRENT_SOURCE_DIR}/op_plugin/row_ops_plugin.cpp
+)
+register_direct_launch_op(
+    "${KERNEL_SRCS}"
+    op_kernel
+    "${PLUGIN_SRCS}"
+    op_plugin
+)

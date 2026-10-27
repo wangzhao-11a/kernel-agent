@@ -1,0 +1,35 @@
+{
+  "id": "swiglu_ascendc_910b",
+  "description": "CannBench L1 SwiGlu on Ascend 910B: 12 official correctness cases plus a 22-case device benchmark vs torch_npu F.silu(x0)*x1. Primary metric is the per-case geometric mean (one large shape cannot dominate); cases span aligned tiles, non-last dims, 4D/5D, prime/odd rows and half-spans 1..4096. The tiny-row path vectorizes Gather offsets for every half and packs even fp16/bf16 halves into uint32 words.",
+  "package": "../../work/main_tree",
+  "edit_files": [
+    "csrc/ops/swiglu/op_kernel/swiglu_kernel.cpp",
+    "csrc/ops/swiglu/op_kernel/swiglu_launch.h",
+    "csrc/ops/swiglu/op_plugin/swiglu_plugin.cpp"
+  ],
+  "build_command": ["bash", "build.sh", "--soc=ascend910b", "--ops=swiglu", "--install"],
+  "test_command": ["python3", "tests/test_swiglu_official.py"],
+  "bench_command": ["python3", "tests/bench_swiglu.py"],
+  "profile_command": ["python3", "tests/profile_swiglu.py"],
+  "timeout_s": 900,
+  "soc": "ascend910b",
+  "hardware": "ascend-910b",
+  "baseline": "npu_swiglu",
+  "metric_key": "speedup",
+  "expected_speedup": 2.6,
+  "metadata": {
+    "op": "swi_glu",
+    "op_class": "elementwise",
+    "dtypes": ["float16", "float32", "bfloat16"],
+    "tags": ["cannbench", "ascendc", "swiglu", "910b"],
+    "official_cases": 12,
+    "edge_cases": 14,
+    "edge_test_command": ["python3", "tests/test_swiglu_tiny_edges.py"],
+    "bench_cases": 22,
+    "bench_metric": "geomean",
+    "bench_runs": 3,
+    "reference_speedup": 2.384,
+    "reference_total_speedup": 2.605,
+    "reference_worst_speedup": 1.685
+  }
+}

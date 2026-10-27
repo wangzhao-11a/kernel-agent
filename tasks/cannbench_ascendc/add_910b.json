@@ -1,0 +1,26 @@
+{
+  "id": "add_ascendc_910b",
+  "description": "CannBench elementwise Add on Ascend 910B: z = x + y for fp16/fp32/int32, flat 1-4D shapes including prime sizes. Build scoped with --ops=add.",
+  "package": "../../work/main_tree",
+  "edit_files": [
+    "csrc/ops/add/op_kernel/add_kernel.cpp",
+    "csrc/ops/add/op_kernel/add_launch.h",
+    "csrc/ops/add/op_plugin/add_plugin.cpp"
+  ],
+  "build_command": ["bash", "build.sh", "--soc=ascend910b", "--ops=add", "--install"],
+  "test_command": ["python3", "tests/test_add_official.py"],
+  "bench_command": ["python3", "tests/bench_add.py"],
+  "timeout_s": 900,
+  "soc": "ascend910b",
+  "hardware": "ascend-910b",
+  "baseline": "torch_add",
+  "metric_key": "speedup",
+  "expected_speedup": 1.0,
+  "metadata": {
+    "op": "add",
+    "op_class": "elementwise",
+    "dtypes": ["float16", "float32", "int32"],
+    "tags": ["cannbench", "ascendc", "add", "910b"],
+    "official_cases": 12
+  }
+}
