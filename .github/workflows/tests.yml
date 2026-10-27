@@ -24,3 +24,5 @@ jobs:
         run: python scripts/memory_selftest.py
       - name: Skill compiler self-test
         run: python scripts/skills_selftest.py
+      - name: CannBench contract self-test
+        run: python scripts/cannbench_selftest.py
