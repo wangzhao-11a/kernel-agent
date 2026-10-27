@@ -430,7 +430,7 @@ __global__ __aicore__ void rms_norm3_kernel(GM_ADDR x, GM_ADDR gamma, GM_ADDR y,
                                             int64_t tile, float eps)
 {
     AscendC::TPipe pipe;
-    constexpr int64_t kMaxRows = 64;
+    constexpr int64_t kMaxRows = 128;
     int64_t R = tile / cols;
     if (R > kMaxRows) R = kMaxRows;
     if (R < 1) R = 1;

@@ -28,8 +28,8 @@
     "bench_cases": 14,
     "bench_metric": "geomean",
     "bench_runs": 3,
-    "reference_speedup": 3.846,
-    "reference_total_speedup": 3.600,
-    "reference_worst_speedup": 1.766
+    "reference_speedup": 3.960,
+    "reference_total_speedup": 3.731,
+    "reference_worst_speedup": 1.753
   }
 }
