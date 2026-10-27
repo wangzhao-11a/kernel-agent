@@ -125,6 +125,45 @@ A solution is any file defining `run(...)`. The harness:
 
 ---
 
+## AscendC operator loop (CannBench)
+
+Besides Python tasks, the harness can drive a compiled AscendC operator package:
+
+- `harness/cannbench.py` loads a JSON spec (`tasks/cannbench_ascendc/*.json`)
+  with an allow-listed edit set and build/test/bench/profile commands, copies
+  the package into an isolated workspace, and parses per-case PASS/FAIL plus
+  `CANNBENCH_METRICS` / `CANNBENCH_PROFILE`.
+- `agent/cannbench_loop.py` runs a plan-gated loop: `plan` -> `read_file` /
+  `patch_files` -> `kb_search` / `source_grep` -> `run_eval` -> `reflect` /
+  `profile`. Edits are cumulative, a no-op write is rejected, and a failing
+  candidate rolls back to the best passing snapshot.
+- `agent/review.py` blocks known AscendC mistakes before the build (in-place
+  `Gather`, wrong `GatherMask`, header-only edits, plan/API mismatch, arch35
+  leakage, destructive rewrites).
+- `rsi/cann_ops.py` + `data/cann_ops_catalog.json` expose an offline source map
+  of the installed CANN operators; `rsi/cards.py` adds AscendC-aware retrieval
+  and free-text `kb_search`.
+
+`tasks/cannbench_ascendc/` ships SwiGlu and RMSNorm specs for 910B (plus SwiGlu
+950 and add). `work/main_tree` is the trimmed operator package they edit;
+`solutions/examples/swiglu_ascendc_910b_tiny_gather` is a reference kernel.
+
+Run the offline contract test (no NPU, compiler or API key):
+
+```bash
+python scripts/cannbench_selftest.py   # 20 checks
+```
+
+On a device, drive a spec through the normal command contract:
+
+```bash
+python -m agent.cannbench_loop \
+    --spec tasks/cannbench_ascendc/swi_glu_910b.json \
+    --max-iters 6 --api-key-env KERNEL_AGENT_API_KEY
+```
+
+---
+
 ## The RSI layer
 
 **Trajectory.** Every attempt is archived as JSONL: the code, the declared
