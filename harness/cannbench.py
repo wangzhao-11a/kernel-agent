@@ -481,13 +481,17 @@ def format_summary(result: dict) -> str:
     bench_cases = raw.get("cases") or []
     if bench_cases:
         lines.append("bench cases (baseline vs candidate):")
-        for case in bench_cases[:16]:
+        for case in bench_cases:
             shape = tuple(case.get("shape") or ())
             lines.append("  %-22s %-9s dim=%-3d base=%8.4fms cand=%8.4fms speedup=%6.3fx %s" % (
                 shape, case.get("dtype"), int(case.get("dim", 0)),
                 float(case.get("baseline_ms") or 0.0), float(case.get("candidate_ms") or 0.0),
                 float(case.get("speedup") or 0.0),
                 "OK" if case.get("correct") else "BAD"))
+        worst_case = min(bench_cases, key=lambda c: float(c.get("speedup") or 0.0))
+        lines.append("worst bench case: %s %s dim=%s speedup=%.3fx" % (
+            tuple(worst_case.get("shape") or ()), worst_case.get("dtype"),
+            worst_case.get("dim"), float(worst_case.get("speedup") or 0.0)))
     for name in ("build", "test", "bench"):
         stage = result.get(name)
         if stage and stage.get("returncode") not in (0, None):
