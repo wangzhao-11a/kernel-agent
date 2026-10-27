@@ -87,6 +87,20 @@ torch::Tensor swi_glu_npu(const torch::Tensor &input, int64_t dim)
         std::tie(tinyBlocks, tinyRowsPerBlock, tinyTileBytes) =
             calc_swiglu_tiny_tiling_params(outer, half, static_cast<int64_t>(x.element_size()));
     }
+    // 910B has no SIMT. Non-aligned rows that are too wide for the tiny path can still
+    // batch R rows per tile if every row is padded to a 32B multiple (half=511 -> 512).
+    bool unalignedBatch = (!aligned) && (!SWIGLU_HAS_SIMT) && (rowBytes >= 32) &&
+                          (!forceTile) && (std::getenv("SWIGLU_NO_UNALIGNED_BATCH") == nullptr);
+    int64_t ubBlocks = 0;
+    int64_t ubRowsPerBlock = 0;
+    int64_t ubR = 0;
+    if (unalignedBatch) {
+        std::tie(ubBlocks, ubRowsPerBlock, ubR) =
+            calc_swiglu_unaligned_tiling_params(outer, half, static_cast<int64_t>(x.element_size()));
+        if (ubR <= 0) {
+            unalignedBatch = false;   // one padded row exceeds UB; keep the chunked main path
+        }
+    }
     auto acl_call = [=]() -> int {
 #if SWIGLU_HAS_SIMT
         if (simtPath && !forceTile) {   // SIMT for short non-aligned rows, tile/DMA otherwise
@@ -107,6 +121,18 @@ torch::Tensor swi_glu_npu(const torch::Tensor &input, int64_t dim)
                 launch_swiglu_tiny_half(x_ptr, y_ptr, outer, half, tinyRowsPerBlock, tinyTileBytes, tinyBlocks, stream);
             } else if (dtype == torch::kBFloat16) {
                 launch_swiglu_tiny_bf16(x_ptr, y_ptr, outer, half, tinyRowsPerBlock, tinyTileBytes, tinyBlocks, stream);
+            } else {
+                TORCH_CHECK(false, "swi_glu supports float32/float16/bfloat16");
+            }
+            return 0;
+        }
+        if (unalignedBatch) {
+            if (dtype == torch::kFloat32) {
+                launch_swiglu_unaligned_float(x_ptr, y_ptr, outer, half, ubR, ubRowsPerBlock, ubBlocks, stream);
+            } else if (dtype == torch::kFloat16) {
+                launch_swiglu_unaligned_half(x_ptr, y_ptr, outer, half, ubR, ubRowsPerBlock, ubBlocks, stream);
+            } else if (dtype == torch::kBFloat16) {
+                launch_swiglu_unaligned_bf16(x_ptr, y_ptr, outer, half, ubR, ubRowsPerBlock, ubBlocks, stream);
             } else {
                 TORCH_CHECK(false, "swi_glu supports float32/float16/bfloat16");
             }

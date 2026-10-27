@@ -11,6 +11,7 @@
 int64_t swiglu_core_num();
 std::tuple<int64_t, int64_t, uint32_t> calc_swiglu_tiling_params(int64_t outer, int64_t half, int64_t elemBytes);
 std::tuple<int64_t, int64_t, uint32_t> calc_swiglu_tiny_tiling_params(int64_t outer, int64_t half, int64_t elemBytes);
+std::tuple<int64_t, int64_t, int64_t> calc_swiglu_unaligned_tiling_params(int64_t outer, int64_t half, int64_t elemBytes);
 
 extern "C" {
 void launch_swiglu_kernel_float(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t half, int64_t rowsPerBlock, uint32_t tileBytes, int64_t numBlocks, void *stream);
@@ -22,6 +23,9 @@ void launch_swiglu_kernel_bf16(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t half
 void launch_swiglu_tiny_float(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t half, int64_t rowsPerBlock, uint32_t tileBytes, int64_t numBlocks, void *stream);
 void launch_swiglu_tiny_half(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t half, int64_t rowsPerBlock, uint32_t tileBytes, int64_t numBlocks, void *stream);
 void launch_swiglu_tiny_bf16(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t half, int64_t rowsPerBlock, uint32_t tileBytes, int64_t numBlocks, void *stream);
+void launch_swiglu_unaligned_float(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t half, int64_t R, int64_t tilesPerBlock, int64_t numBlocks, void *stream);
+void launch_swiglu_unaligned_half(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t half, int64_t R, int64_t tilesPerBlock, int64_t numBlocks, void *stream);
+void launch_swiglu_unaligned_bf16(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t half, int64_t R, int64_t tilesPerBlock, int64_t numBlocks, void *stream);
 }
 
 #endif // SWIGLU_LAUNCH_H

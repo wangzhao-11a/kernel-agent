@@ -357,6 +357,132 @@ __global__ __aicore__ void swiglu_kernel(GM_ADDR x, GM_ADDR y, int64_t outer, in
 }
 
 
+// Non-aligned rows (half*sizeof(T) >= 32B but not a multiple of 32B): pad each row to
+// halfA elements so a whole tile of R rows can be copied with blockCount=R and blockLen
+// a 32B multiple. The vector work then runs on the contiguous padded tile; only the
+// output stores stay per-row (the GM rows are 511 elements wide, not 512).
+template <typename T>
+__global__ __aicore__ void swiglu_unaligned_kernel(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t half,
+                                                   int64_t R, int64_t tilesPerBlock)
+{
+    AscendC::TPipe pipe;
+    const int64_t es = static_cast<int64_t>(sizeof(T));
+    const int64_t halfA = ((half * es + 31) / 32) * 32 / es;
+    const int64_t tileElems = R * halfA;
+    const uint32_t tileBytes = static_cast<uint32_t>(((tileElems * es + 31) / 32) * 32);
+    const uint32_t fBytes = static_cast<uint32_t>(((tileElems * 4 + 31) / 32) * 32);
+
+    AscendC::TQue<AscendC::QuePosition::VECIN, 1> inX0, inX1;
+    AscendC::TQue<AscendC::QuePosition::VECOUT, 1> outY;
+    AscendC::TQue<AscendC::QuePosition::VECCALC, 2> tmpQ;
+    pipe.InitBuffer(inX0, 1, tileBytes);
+    pipe.InitBuffer(inX1, 1, tileBytes);
+    pipe.InitBuffer(outY, 1, tileBytes);
+    pipe.InitBuffer(tmpQ, 2, fBytes);
+
+    int64_t blockIdx = AscendC::GetBlockIdx();
+    int64_t totalTiles = (outer + R - 1) / R;
+    int64_t tStart = blockIdx * tilesPerBlock;
+    int64_t tEnd = tStart + tilesPerBlock;
+    if (tEnd > totalTiles) tEnd = totalTiles;
+    if (tStart >= tEnd) return;
+
+    AscendC::GlobalTensor<T> xGm, yGm;
+    xGm.SetGlobalBuffer((__gm__ T *)x);
+    yGm.SetGlobalBuffer((__gm__ T *)y);
+    AscendC::DataCopyPadExtParams<T> padParams{false, 0, 0, 0};
+    const uint32_t rowBytes = static_cast<uint32_t>(halfA * es);
+    const uint32_t gapBytes = static_cast<uint32_t>((2 * half - halfA) * es);
+    const uint32_t outBytes = static_cast<uint32_t>(half * es);
+
+    for (int64_t t = tStart; t < tEnd; ++t) {
+        int64_t r0 = t * R;
+        int64_t rh = (R < outer - r0) ? R : (outer - r0);
+        int32_t n = static_cast<int32_t>(rh * halfA);
+
+        auto x0 = inX0.AllocTensor<T>();
+        auto x1 = inX1.AllocTensor<T>();
+        AscendC::DataCopyPad(x0, xGm[r0 * 2 * half],
+                             AscendC::DataCopyExtParams{static_cast<uint16_t>(rh), rowBytes, gapBytes, 0, 0},
+                             padParams);
+        bool lastTile = (r0 + rh == outer);
+        if (lastTile) {
+            // The last x1 row would read one element past the tensor; copy it exactly.
+            if (rh > 1) {
+                AscendC::DataCopyPad(x1, xGm[r0 * 2 * half + half],
+                                     AscendC::DataCopyExtParams{static_cast<uint16_t>(rh - 1), rowBytes, gapBytes, 0, 0},
+                                     padParams);
+            }
+            AscendC::DataCopyPad(x1[(rh - 1) * halfA], xGm[(r0 + rh - 1) * 2 * half + half],
+                                 AscendC::DataCopyExtParams{1, outBytes, 0, 0, 0}, padParams);
+        } else {
+            AscendC::DataCopyPad(x1, xGm[r0 * 2 * half + half],
+                                 AscendC::DataCopyExtParams{static_cast<uint16_t>(rh), rowBytes, gapBytes, 0, 0},
+                                 padParams);
+        }
+        inX0.EnQue(x0);
+        inX1.EnQue(x1);
+        x0 = inX0.DeQue<T>();
+        x1 = inX1.DeQue<T>();
+
+        auto yLocal = outY.AllocTensor<T>();
+        bool usedAdvApi = false;
+#if SWIGLU_HAS_ADV_API
+        if constexpr (!std::is_same_v<T, bfloat16_t>) {
+            AscendC::SwiGLU<T>(yLocal, x1, x0, 1.0f, static_cast<uint32_t>(n));
+            usedAdvApi = true;
+        }
+#endif
+        if (!usedAdvApi) {
+            auto s0 = tmpQ.AllocTensor<float>();
+            auto s1 = tmpQ.AllocTensor<float>();
+            if constexpr (sizeof(T) == sizeof(float)) {
+                AscendC::Muls(s1, x0, static_cast<float>(-1), static_cast<uint32_t>(n));
+                AscendC::Exp(s0, s1, static_cast<uint32_t>(n));
+                AscendC::Adds(s1, s0, static_cast<float>(1), static_cast<uint32_t>(n));
+                AscendC::Div(s0, x0, s1, static_cast<uint32_t>(n));
+                AscendC::Mul(yLocal, s0, x1, static_cast<uint32_t>(n));
+            } else {
+                bool usedSilu = false;
+#if SWIGLU_HAS_ADV_API
+                AscendC::Cast(s0, x0, AscendC::RoundMode::CAST_NONE, static_cast<uint32_t>(n));
+                AscendC::Silu<float>(s1, s0, static_cast<uint32_t>(n));
+                AscendC::Cast(s0, x1, AscendC::RoundMode::CAST_NONE, static_cast<uint32_t>(n));
+                AscendC::Mul(s1, s1, s0, static_cast<uint32_t>(n));
+                AscendC::Cast(yLocal, s1, AscendC::RoundMode::CAST_RINT, static_cast<uint32_t>(n));
+                usedSilu = true;
+#endif
+                if (!usedSilu) {
+                    AscendC::Cast(s0, x0, AscendC::RoundMode::CAST_NONE, static_cast<uint32_t>(n));
+                    AscendC::Muls(s1, s0, static_cast<float>(-1), static_cast<uint32_t>(n));
+                    AscendC::Exp(s1, s1, static_cast<uint32_t>(n));
+                    AscendC::Adds(s1, s1, static_cast<float>(1), static_cast<uint32_t>(n));
+                    AscendC::Div(s1, s0, s1, static_cast<uint32_t>(n));
+                    AscendC::Cast(s0, x1, AscendC::RoundMode::CAST_NONE, static_cast<uint32_t>(n));
+                    AscendC::Mul(s1, s1, s0, static_cast<uint32_t>(n));
+                    AscendC::Cast(yLocal, s1, AscendC::RoundMode::CAST_RINT, static_cast<uint32_t>(n));
+                }
+            }
+            tmpQ.FreeTensor(s1);
+            tmpQ.FreeTensor(s0);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0);
+        inX0.FreeTensor(x0);
+        inX1.FreeTensor(x1);
+
+        outY.EnQue(yLocal);
+        yLocal = outY.DeQue<T>();
+        for (int64_t i = 0; i < rh; ++i) {
+            AscendC::DataCopyPad(yGm[(r0 + i) * half], yLocal[i * halfA],
+                                 AscendC::DataCopyExtParams{1, outBytes, 0, 0, 0});
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0);
+        outY.FreeTensor(yLocal);
+    }
+}
+
 #if SWIGLU_HAS_SIMT
 // ---------------------------------------------------------------------------
 // SIMT path (non-aligned rows): one thread per output element, GM random access —
@@ -516,6 +642,30 @@ std::tuple<int64_t, int64_t, uint32_t> calc_swiglu_tiny_tiling_params(int64_t ou
     return std::make_tuple(numBlocks, tilesPerBlock, tileBytes);
 }
 
+std::tuple<int64_t, int64_t, int64_t> calc_swiglu_unaligned_tiling_params(int64_t outer, int64_t half, int64_t elemBytes)
+{
+    auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
+    uint64_t ubSize = 0;
+    ascendcPlatform->GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
+    int64_t coreNum = ascendcPlatform->GetCoreNumAiv();
+    if (coreNum <= 0) {
+        coreNum = 1;
+    }
+    int64_t halfA = ((half * elemBytes + 31) / 32) * 32 / elemBytes;
+    int64_t perRow = halfA * (3 * elemBytes + 8);   // 3 one-deep queues + 2 fp32 scratch slices
+    int64_t R = (static_cast<int64_t>(ubSize) * 8 / 10) / std::max<int64_t>(1, perRow);
+    if (R > 16) {
+        R = 16;
+    }
+    if (R < 1) {
+        return std::make_tuple(0, 0, 0);   // one padded row does not fit; caller uses the main path
+    }
+    int64_t totalTiles = (outer + R - 1) / R;
+    int64_t numBlocks = std::min<int64_t>(coreNum, std::max<int64_t>(1, totalTiles));
+    int64_t tilesPerBlock = (totalTiles + numBlocks - 1) / numBlocks;
+    return std::make_tuple(numBlocks, tilesPerBlock, R);
+}
+
 extern "C" {
 
 #if SWIGLU_HAS_SIMT
@@ -562,6 +712,21 @@ void launch_swiglu_tiny_half(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t halfSp
 void launch_swiglu_tiny_bf16(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t halfSpan, int64_t tilesPerBlock, uint32_t tileBytes, int64_t numBlocks, void *stream)
 {
     swiglu_tiny_kernel<bfloat16_t><<<numBlocks, nullptr, stream>>>(x, y, outer, halfSpan, tilesPerBlock, tileBytes);
+}
+
+void launch_swiglu_unaligned_float(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t halfSpan, int64_t R, int64_t tilesPerBlock, int64_t numBlocks, void *stream)
+{
+    swiglu_unaligned_kernel<float><<<numBlocks, nullptr, stream>>>(x, y, outer, halfSpan, R, tilesPerBlock);
+}
+
+void launch_swiglu_unaligned_half(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t halfSpan, int64_t R, int64_t tilesPerBlock, int64_t numBlocks, void *stream)
+{
+    swiglu_unaligned_kernel<half><<<numBlocks, nullptr, stream>>>(x, y, outer, halfSpan, R, tilesPerBlock);
+}
+
+void launch_swiglu_unaligned_bf16(GM_ADDR x, GM_ADDR y, int64_t outer, int64_t halfSpan, int64_t R, int64_t tilesPerBlock, int64_t numBlocks, void *stream)
+{
+    swiglu_unaligned_kernel<bfloat16_t><<<numBlocks, nullptr, stream>>>(x, y, outer, halfSpan, R, tilesPerBlock);
 }
 
 } // extern "C"
