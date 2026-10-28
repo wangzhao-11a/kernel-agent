@@ -44,3 +44,5 @@ jobs:
         run: python scripts/context_selftest.py
       - name: Weighted shape gate self-test
         run: python scripts/shape_gate_selftest.py
+      - name: Component ablation smoke
+        run: python scripts/ablate.py --tag ci-ablation --seeds 1 --evals 8 --tokens 600 --out runs/meta_eval

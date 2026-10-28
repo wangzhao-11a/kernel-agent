@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "tag": "phase3-search-compare",
-  "git_commit": "e908131d5c1121980caefa03d16808635cee349a",
+  "git_commit": "f49b30a015d9af7377e8009372facd3077b9dc20",
   "git_tag": "",
   "device": "cpu",
   "mode": "synthetic-terrain",
@@ -22,6 +22,8 @@
     "single-chain": {
       "summary": {
         "pass@1": 0.6,
+        "pass@2": 0.9,
+        "pass@3": 1.0,
         "best_mean": 2.3276,
         "best_stdev": 0.3315,
         "best_min": 1.9297,
@@ -1923,6 +1925,8 @@
     "beam": {
       "summary": {
         "pass@1": 0.2,
+        "pass@2": 0.4,
+        "pass@3": 0.6,
         "best_mean": 2.0493,
         "best_stdev": 0.2747,
         "best_min": 1.8636,
@@ -3829,6 +3833,8 @@
     "ucb": {
       "summary": {
         "pass@1": 1.0,
+        "pass@2": 1.0,
+        "pass@3": 1.0,
         "best_mean": 3.0802,
         "best_stdev": 0.4083,
         "best_min": 2.5583,
@@ -5735,6 +5741,8 @@
     "thompson": {
       "summary": {
         "pass@1": 1.0,
+        "pass@2": 1.0,
+        "pass@3": 1.0,
         "best_mean": 3.283,
         "best_stdev": 0.4173,
         "best_min": 2.4793,
@@ -7641,6 +7649,8 @@
     "staged": {
       "summary": {
         "pass@1": 1.0,
+        "pass@2": 1.0,
+        "pass@3": 1.0,
         "best_mean": 2.8113,
         "best_stdev": 0.2759,
         "best_min": 2.4759,
@@ -9545,5 +9555,5 @@
       }
     }
   },
-  "timestamp": "2026-10-28T13:38:34Z"
+  "timestamp": "2026-10-28T14:11:50Z"
 }

@@ -40,10 +40,29 @@ def _git(cmd):
         return ""
 
 
+def _pass_at_k(successes, k):
+    n = len(successes)
+    k = min(int(k), n)
+    if k <= 0:
+        return 0.0
+    c = sum(1 for x in successes if x)
+    if c == 0:
+        return 0.0
+    if n - c < k:
+        return 1.0
+    miss = 1.0
+    for i in range(k):
+        miss *= (n - c - i) / float(n - i)
+    return 1.0 - miss
+
+
 def _summary(rows, threshold):
     bests = [r["best_reward"] for r in rows]
+    successes = [bool(r["threshold_hit"]) for r in rows]
     return {
         "pass@1": round(sum(1 for r in rows if r["threshold_hit"]) / len(rows), 4),
+        "pass@2": round(_pass_at_k(successes, 2), 4),
+        "pass@3": round(_pass_at_k(successes, 3), 4),
         "best_mean": round(statistics.fmean(bests), 4),
         "best_stdev": round(statistics.pstdev(bests), 4) if len(bests) > 1 else 0.0,
         "best_min": round(min(bests), 4),
@@ -127,14 +146,15 @@ def main(argv=None) -> int:
         fh.write("\n")
     print("meta-eval tag=%s seeds=%d evals<=%d tokens<=%d" % (
         args.tag, len(payload["seeds"]), args.evals, args.tokens))
-    print("%-14s %7s %10s %9s %9s %9s %9s %9s" % (
-        "policy", "pass@1", "best_mean", "best_std", "best_min", "best_max",
-        "evals", "tokens"))
+    print("%-14s %7s %7s %7s %10s %9s %9s %9s %9s %9s" % (
+        "policy", "pass@1", "pass@2", "pass@3", "best_mean", "best_std",
+        "best_min", "best_max", "evals", "tokens"))
     for name, block in payload["policies"].items():
         s = block["summary"]
-        print("%-14s %7.2f %10.3f %9.3f %9.3f %9.3f %9.1f %9.0f" % (
-            name, s["pass@1"], s["best_mean"], s["best_stdev"], s["best_min"],
-            s["best_max"], s["evals_mean"], s["tokens_mean"]))
+        print("%-14s %7.2f %7.2f %7.2f %10.3f %9.3f %9.3f %9.3f %9.1f %9.0f" % (
+            name, s["pass@1"], s["pass@2"], s["pass@3"], s["best_mean"],
+            s["best_stdev"], s["best_min"], s["best_max"], s["evals_mean"],
+            s["tokens_mean"]))
     print("result: %s" % path)
     print("note: CPU synthetic terrain; mechanism-only, not a hardware result")
     return 0

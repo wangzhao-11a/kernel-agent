@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "tag": "phase4-ablation",
+  "device": "cpu",
+  "note": "CPU mechanism checks only; memory metrics are synthetic, screening is a search-budget proxy (not a profiler ablation)",
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "timestamp": "2026-10-28T14:12:01Z",
+  "memory": {
+    "strict": {
+      "same_scope_recall": 1.0,
+      "cross_soc_recall": 0.0,
+      "cross_soc_soft_hits": 0
+    },
+    "soft": {
+      "same_scope_recall": 1.0,
+      "cross_soc_recall": 1.0,
+      "cross_soc_soft_hits": 4
+    },
+    "memory_off": {
+      "same_scope_recall": 0.0,
+      "cross_soc_recall": 0.0,
+      "cross_soc_soft_hits": 0
+    }
+  },
+  "leave_one_family_out": {
+    "attention": {
+      "strict_recall": 0,
+      "soft_recall": 0,
+      "contaminating_ids": []
+    },
+    "gemm": {
+      "strict_recall": 0,
+      "soft_recall": 0,
+      "contaminating_ids": []
+    },
+    "elementwise": {
+      "strict_recall": 0,
+      "soft_recall": 0,
+      "contaminating_ids": []
+    },
+    "norm": {
+      "strict_recall": 0,
+      "soft_recall": 0,
+      "contaminating_ids": []
+    }
+  },
+  "screening_proxy": {
+    "single-chain": {
+      "best_mean": 2.3276,
+      "pass@1": 0.6,
+      "tokens_mean": 4800.0
+    },
+    "staged": {
+      "best_mean": 2.8113,
+      "pass@1": 1.0,
+      "tokens_mean": 2010.0
+    }
+  }
+}
