@@ -226,6 +226,21 @@ the current best-first beam does not.  These are CPU synthetic mechanism results
 not hardware/operator performance claims.  `scripts/search_selftest.py` pins the
 budget accounting and the seeded ranking.
 
+## Observation tools (Phase 4.2)
+
+- **Roofline.** A TASK may declare `"workload": {"bytes": ..., "flops": ...}` and
+  optional `"peak_bw_gbps"` / `"peak_tflops"` (or set
+  `KERNEL_AGENT_PEAK_BW_GBPS` / `KERNEL_AGENT_PEAK_TFLOPS`).  The worker then adds
+  `timing.roofline` with achieved bandwidth/throughput, utilization and a
+  memory/compute bottleneck label; `format_summary` prints it.  This is an
+  estimate from declared traffic, not a hardware counter.
+- **On-demand memory.** The agent can call
+  `{"action": "memory", "query": "<free text>"}`.  `MemoryStore.search_text`
+  returns facts/failures/skills/strategies by token overlap (CJK bigrams included)
+  across scopes, explicitly marked **not scope-matched** so a text hit cannot be
+  mistaken for a condition-matched prior.
+- `scripts/roofline_selftest.py` covers both on CPU.
+
 ---
 
 ## The RSI layer

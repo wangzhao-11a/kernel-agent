@@ -37,6 +37,9 @@ Reply with exactly ONE JSON object, no prose outside it:
       Re-evaluate the current solution unchanged.
   {{"action": "profile"}}
       Profile the current solution (op-level self-time breakdown) to guide the next change.
+  {{"action": "memory", "query": "<free text>"}}
+      Search remembered facts/failures/skills/strategies on demand. Results are text matches,
+      NOT scope-matched: check each record's scope before applying it.
   {{"action": "knowledge", "id": "<card path from the candidates list>"}}
       Load a CANN knowledge card (recipe + applicability conditions) when you need its details.
   {{"action": "finish", "summary": "<2-4 sentences: final approach, speedup, caveats>"}}

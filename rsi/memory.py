@@ -136,6 +136,16 @@ def _match_norm(value) -> str:
     return re.sub(r"[-_\s]+", "", str(value or "").lower())
 
 
+def _text_tokens(text: str) -> set:
+    """Token set for free-text memory search; adds CJK bigrams so Chinese text matches."""
+    raw = str(text or "").lower()
+    tokens = set(re.findall(r"[a-z0-9_]+", raw))
+    for run in re.findall(r"[\u4e00-\u9fff]+", raw):
+        tokens.update(run[i:i + 2] for i in range(max(1, len(run) - 1)))
+        tokens.update(run)
+    return {t for t in tokens if len(t) > 1 or t.isdigit()}
+
+
 DTYPE_ALIASES = {
     "fp16": "float16", "half": "float16", "float16": "float16",
     "bf16": "bfloat16", "bfloat16": "bfloat16",
@@ -857,6 +867,60 @@ class MemoryStore:
             per_type[hit["type"]] += 1
             out.append(hit)
         return out
+
+    def search_text(self, query: str, top_k: int = 5, kinds=None) -> list:
+        """Free-text search over memory, e.g. an agent's on-demand memory query.
+
+        Results are NOT scope-filtered: the caller must check the record's scope
+        before applying them.  This is deliberately separate from ``retrieve`` so
+        a text hit can never silently count as condition-matched priors.
+        """
+        query = str(query or "").strip()
+        if not query:
+            return []
+        tokens = _text_tokens(query)
+        if not tokens:
+            return []
+        kinds = set(kinds) if kinds else None
+        hits = []
+
+        def add(row, kind, text, status="", updated=""):
+            if kinds and kind not in kinds:
+                return
+            hay = _text_tokens(text)
+            if not hay:
+                return
+            shared = tokens & hay
+            if not shared:
+                return
+            score = len(shared) / len(tokens | hay)
+            if query.lower() in str(text).lower():
+                score += 0.25
+            hits.append({
+                "type": kind,
+                "id": row.get("id"),
+                "record": row,
+                "score": round(score, 4),
+                "status": status,
+                "why": ["text: " + ", ".join(sorted(shared)[:8])],
+            })
+
+        for row in self.facts:
+            add(row, "fact", " ".join(str(row.get(k) or "") for k in ("statement", "key", "authority")),
+                status=row.get("status") or "")
+        for row in self.failures:
+            add(row, "failure", " ".join(str(row.get(k) or "") for k in
+                                         ("signature", "stage", "workaround", "minimal_repro")),
+                status=row.get("status") or "")
+        for row in self.skills:
+            add(row, "skill", " ".join(str(row.get(k) or "") for k in ("name", "preconditions", "language")),
+                status=row.get("confidence") or "")
+        for row in self._strategy_rows():
+            rec = row.get("record") or {}
+            add(rec, "strategy", " ".join(str(rec.get(k) or "") for k in ("statement", "key")),
+                status=rec.get("confidence") or "")
+        hits.sort(key=lambda h: -h["score"])
+        return hits[:max(1, int(top_k))]
 
     def context(self, features: dict, top_k: int = 3, max_chars: int = 10000, kinds=None) -> str:
         hits = self.retrieve(features, top_k=top_k, kinds=kinds)

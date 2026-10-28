@@ -127,6 +127,7 @@ class Task:
         self.schema_version = int(meta.get("schema_version", 1))
         self.policy = normalize_policy(meta)
         self.shape_set = parse_shape_set(meta.get("shape_set"))
+        self.workload = dict(meta.get("workload") or {})
         self.source = _read_source(self.path)
 
     @property

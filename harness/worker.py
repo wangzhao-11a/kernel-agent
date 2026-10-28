@@ -22,6 +22,7 @@ from . import benchmark as bench_mod
 from . import correctness as corr_mod
 from . import device as dev
 from . import policy as pol
+from . import roofline as roofline_mod
 from . import stats as stats_mod
 from .tasks import TaskLoadError, load_task
 
@@ -234,6 +235,15 @@ def format_summary(result: dict) -> str:
         )
         if t.get("speedup_ci95"):
             lines.append("speedup CI95: [%.3f, %.3f]" % tuple(t["speedup_ci95"]))
+        roof = t.get("roofline") or {}
+        if roof:
+            parts = ["bottleneck=%s" % roof.get("bottleneck"),
+                     "bw=%.1f GB/s" % roof.get("achieved_bw_gbps", 0.0)]
+            if roof.get("bw_utilization") is not None:
+                parts.append("bw_util=%.1f%%" % (100 * roof["bw_utilization"]))
+            if roof.get("flops_utilization") is not None:
+                parts.append("flops_util=%.1f%%" % (100 * roof["flops_utilization"]))
+            lines.append("roofline: " + ", ".join(parts))
     if result.get("policy_strict"):
         lines.append("policy: strict (native compute forbidden%s)" % (
             ", kernel required" if (result.get("policy") or {}).get("require_kernel") else ""))
@@ -489,6 +499,9 @@ def main(argv=None) -> int:
         "stability_delta": round(stability, 4),
         "unit": "ms",
     }
+    roof = roofline_mod.estimate(getattr(task, "workload", {}), sol_t["median_ms"], task.meta)
+    if roof:
+        result["timing"]["roofline"] = roof
 
     # Strict tasks are audited for two timing escapes: cached outputs on the
     # repeated benchmark input, and work launched on a side stream.  The audit

@@ -36,3 +36,5 @@ jobs:
         run: python scripts/search_selftest.py
       - name: Structure/parameter self-test
         run: python scripts/params_selftest.py
+      - name: Roofline and memory-query self-test
+        run: python scripts/roofline_selftest.py

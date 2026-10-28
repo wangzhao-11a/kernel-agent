@@ -593,6 +593,33 @@ def main(argv=None) -> int:
                 else:
                     message = ("No knowledge card at id %r (use a path from the candidates list)."
                                % card_id)
+        elif kind == "memory":
+            query = str(action.get("query") or "").strip()
+            if not mem:
+                message = "Memory is disabled for this run."
+            elif not query:
+                message = "memory needs a non-empty 'query' string."
+            else:
+                hits = mem.search_text(query, top_k=5)
+                log("memory", "search %r -> %d hit(s)" % (query, len(hits)),
+                    meta={"iteration": iteration})
+                if not hits:
+                    message = "No memory records matched %r." % query
+                else:
+                    lines = ["Memory text matches for %r (NOT scope-matched; verify before use):" % query]
+                    for hit in hits:
+                        rec = hit["record"]
+                        what = (rec.get("statement") or rec.get("signature")
+                                or rec.get("name") or "")[:300]
+                        lines.append("- [%s %s] score=%.3f status=%s | %s" % (
+                            hit["type"].upper(), hit["id"], hit["score"],
+                            rec.get("confidence") or rec.get("status") or "candidate", what))
+                        scope = rec.get("scope") or {}
+                        if scope:
+                            lines.append("    scope: %s" % json.dumps(scope, ensure_ascii=False)[:240])
+                    message = ("\n".join(lines) +
+                               "\nApply a record only if its scope matches this task; otherwise treat it "
+                               "as an unverified analogy at low weight. Reply with exactly one JSON action.")
         elif kind == "profile":
             if args.profiler == "off":
                 message = "Profiling is disabled (--profiler off). Use write_solution / run_eval / finish."
