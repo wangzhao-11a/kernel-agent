@@ -246,7 +246,13 @@ measure profiler efficacy).
   returns facts/failures/skills/strategies by token overlap (CJK bigrams included)
   across scopes, explicitly marked **not scope-matched** so a text hit cannot be
   mistaken for a condition-matched prior.
-- `scripts/roofline_selftest.py` covers both on CPU.
+- **Per-shape profiling.** `{"action": "profile", "case": "<shape_set name>",
+  "trial": 0}` profiles one declared shape instead of the first/default one
+  (torch backend).
+- **Correctness location.** A tolerance failure now reports the output index,
+  tensor shape/dtype, bad count and the first few mismatching coordinates.
+- `scripts/roofline_selftest.py` covers the roofline/memory query; the shape-gate
+  self-test covers diff locations and per-case profiling.
 
 ### Soft scope and failure similarity (Phase 4.3)
 

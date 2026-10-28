@@ -88,12 +88,44 @@ def check_regression(tmp):
     assert gate["worst_speedup"] < 0.9, gate
 
 
+def check_diff_detail():
+    import torch
+
+    from harness.correctness import compare_outputs
+
+    ref = torch.zeros(2, 3)
+    out = torch.zeros(2, 3)
+    out[1, 2] = 1.0
+    res = compare_outputs(ref, out, 1e-5, 1e-5)
+    assert res["ok"] is False, res
+    assert res["diff"]["bad_locations"] == [[1, 2]], res
+    assert res["diff"]["bad_count"] == 1 and res["diff"]["shape"] == [2, 3], res
+    assert "first_at=[1, 2]" in res["reason"], res["reason"]
+
+
+def check_profile_case(tmp):
+    from harness.profile_runner import profile
+
+    task = os.path.join(tmp, "profile_task.py")
+    sol = os.path.join(tmp, "profile_sol.py")
+    with open(task, "w", encoding="utf-8") as fh:
+        fh.write(TASK % "0.1")
+    with open(sol, "w", encoding="utf-8") as fh:
+        fh.write(GOOD)
+    res = profile(task, sol, device="cpu", backend="torch", case="large", trial=1,
+                  out_dir=os.path.join(tmp, "profile_out"), timeout=180, iters=2)
+    assert res["status"] == "ok", res
+    assert (res.get("summary") or {}).get("top_ops"), res
+
+
 def main():
     check_stats()
     tmp = tempfile.mkdtemp(prefix="ka_shape_")
     check_good(tmp)
     check_regression(tmp)
-    print("passed: 3 | failed: 0")
+    check_diff_detail()
+    check_profile_case(tmp)
+    print("passed: 5 | failed: 0")
 
 
 if __name__ == "__main__":

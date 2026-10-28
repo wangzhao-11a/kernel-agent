@@ -221,6 +221,12 @@ def format_summary(result: dict) -> str:
             "correctness: %s (trials=%d, max_abs_err=%.3e)"
             % ("ok" if c.get("ok") else "FAILED", len(c.get("trials", [])), c.get("max_abs_err", 0.0))
         )
+        diff = c.get("diff") or {}
+        if diff:
+            lines.append("first bad element: output=%s shape=%s at %s (%d/%d exceed tolerance)" % (
+                diff.get("output"), diff.get("shape"),
+                (diff.get("bad_locations") or ["?"])[0],
+                diff.get("bad_count", 0), diff.get("total", 0)))
     t = result.get("timing")
     if t:
         lines.append(

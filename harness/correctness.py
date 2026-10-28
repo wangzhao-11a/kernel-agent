@@ -101,6 +101,25 @@ def _nonfinite_masks(x):
     return None, None
 
 
+def _bad_locations(mask, max_n: int = 5) -> list:
+    """First mismatching coordinates (framework-agnostic, best effort)."""
+    root = _module_root(mask)
+    try:
+        if root == "torch":
+            import torch
+
+            coords = torch.nonzero(mask)
+            return [list(map(int, row)) for row in coords[:max_n].tolist()]
+        if root == "numpy":
+            import numpy as np
+
+            coords = np.argwhere(mask)
+            return [list(map(int, row)) for row in coords[:max_n].tolist()]
+    except Exception:
+        return []
+    return []
+
+
 def compare_outputs(ref, out, atol: float, rtol: float, allow_nonfinite: bool = False) -> dict:
     rl = leaves(ref)
     ol = leaves(out)
@@ -139,7 +158,8 @@ def compare_outputs(ref, out, atol: float, rtol: float, allow_nonfinite: bool = 
             diff = abs(o - r)
             diff[~finite] = 0
             limit = atol + rtol * abs(r)
-            bad = int(((diff > limit) & finite).sum())
+            bad_mask = (diff > limit) & finite
+            bad = int(bad_mask.sum())
             abs_err = float(diff.max()) if _numel(diff) else 0.0
             rel_err = float((diff / (abs(r) + 1e-12)).max()) if _numel(diff) else 0.0
         else:
@@ -147,18 +167,25 @@ def compare_outputs(ref, out, atol: float, rtol: float, allow_nonfinite: bool = 
                 return {"ok": False, "reason": "output %d contains NaN/Inf" % idx}
             diff = abs(o - r)
             limit = atol + rtol * abs(r)
-            bad = int((diff > limit).sum())
+            bad_mask = diff > limit
+            bad = int(bad_mask.sum())
             abs_err = float(diff.max()) if _numel(diff) else 0.0
             rel_err = float((diff / (abs(r) + 1e-12)).max()) if _numel(diff) else 0.0
         max_abs = max(max_abs, abs_err)
         max_rel = max(max_rel, rel_err)
         if bad:
+            locs = _bad_locations(bad_mask)
             return {
                 "ok": False,
-                "reason": "output %d: %d/%d elements exceed tolerance (max_abs_err=%.3e, atol=%.1e, rtol=%.1e)"
-                % (idx, bad, _numel(diff), abs_err, atol, rtol),
+                "reason": "output %d: %d/%d elements exceed tolerance (max_abs_err=%.3e, atol=%.1e, rtol=%.1e, first_at=%s)"
+                % (idx, bad, _numel(diff), abs_err, atol, rtol,
+                   locs[0] if locs else "?"),
                 "max_abs_err": max_abs,
                 "max_rel_err": max_rel,
+                "diff": {"output": idx, "shape": list(r_shape), "dtype": str(r_dtype),
+                         "bad_count": bad, "total": _numel(diff),
+                         "bad_locations": locs,
+                         "max_abs_err": abs_err, "max_rel_err": rel_err},
             }
     return {"ok": True, "reason": None, "max_abs_err": max_abs, "max_rel_err": max_rel}
 
@@ -208,10 +235,12 @@ def run_correctness(task, solution_fn, device: str, num_trials=None,
             "reason": res.get("reason"),
             "mutated_inputs": bool(mutated),
             "max_abs_err": float(res.get("max_abs_err", 0.0)),
+            "diff": res.get("diff"),
         })
         if not res["ok"]:
             overall["ok"] = False
             overall["reason"] = "trial %d: %s" % (trial, res["reason"])
+            overall["diff"] = res.get("diff")
             break
         if mutated:
             overall["ok"] = False

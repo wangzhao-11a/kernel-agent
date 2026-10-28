@@ -359,17 +359,19 @@ def main(argv=None) -> int:
     if replayer is not None:
         replayer.index = llm_calls
 
-    def do_profile(path: str, it: int):
+    def do_profile(path: str, it: int, case: str = "", trial: int = 0):
         """Profile the current solution in a subprocess; returns (text, meta)."""
         from harness.profile_runner import profile as run_profile
 
         res = run_profile(args.task, path, device=args.device, backend=args.profiler,
-                          out_dir=os.path.join(run_dir, "profiling"), timeout=args.timeout, iters=3)
+                          out_dir=os.path.join(run_dir, "profiling"), timeout=args.timeout,
+                          iters=3, trial=trial, case=case)
         if res.get("status") == "ok":
             text = res["text"]
         else:
             text = "profiling unavailable (%s): %s" % (res.get("status"), res.get("error"))
-        log("profiling", text, meta={"iteration": it, "backend": args.profiler, "status": res.get("status")})
+        log("profiling", text, meta={"iteration": it, "backend": args.profiler,
+                                     "status": res.get("status"), "case": case, "trial": trial})
         if not args.quiet:
             print("profiling (%s): %s" % (args.profiler, res.get("status")))
         summary = res.get("summary") or {}
@@ -378,7 +380,7 @@ def main(argv=None) -> int:
             text = text + "\n\n" + bottlenecks.render(advice)
         meta = {"backend": args.profiler, "status": res.get("status"),
                 "top_ops": summary.get("top_ops") or None, "advice": advice or None,
-                "out_dir": res.get("out_dir")}
+                "out_dir": res.get("out_dir"), "case": case or None, "trial": trial}
         return text, meta
 
     repeat_sig = (resume or {}).get("repeat_sig") or ""
@@ -782,8 +784,15 @@ def main(argv=None) -> int:
             elif current_path is None:
                 message = "No solution submitted yet. Use write_solution first."
             else:
-                text, _meta = do_profile(current_path, iteration)
-                message = "Profiling result:\n```\n%s\n```\nReply with exactly one JSON action." % text
+                case = str(action.get("case") or "").strip()
+                try:
+                    trial = int(action.get("trial", 0) or 0)
+                except (TypeError, ValueError):
+                    trial = 0
+                text, _meta = do_profile(current_path, iteration, case=case, trial=trial)
+                message = ("Profiling result%s:\n```\n%s\n```\n"
+                           "Reply with exactly one JSON action."
+                           % ((" for case %r, trial %d" % (case, trial)) if case else "", text))
         elif kind == "finish":
             finisher = str(action.get("summary", ""))
             log("user", "finish requested: %s" % finisher)

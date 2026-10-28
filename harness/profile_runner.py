@@ -32,7 +32,8 @@ BACKENDS = ("torch", "msprof", "ncu")
 
 
 def profile(task: str, solution: str, device: str = "auto", backend: str = "torch",
-            out_dir: str = None, timeout: float = 900.0, iters: int = 3, top: int = 10) -> dict:
+            out_dir: str = None, timeout: float = 900.0, iters: int = 3, top: int = 10,
+            trial: int = 0, case: str = "") -> dict:
     out_dir = out_dir or os.path.join(ROOT, "runs", "profiling")
     os.makedirs(out_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
@@ -43,7 +44,10 @@ def profile(task: str, solution: str, device: str = "auto", backend: str = "torc
         out_path = os.path.join(out_dir, "torch_%s.json" % stamp)
         cmd = [sys.executable, "-m", "harness.profilers.torch_prof",
                "--task", task, "--solution", solution, "--device", device,
-               "--iters", str(int(iters)), "--top", str(int(top)), "--out", out_path]
+               "--iters", str(int(iters)), "--top", str(int(top)), "--out", out_path,
+               "--trial", str(int(trial))]
+        if case:
+            cmd += ["--case", str(case)]
         proc = _run(cmd, timeout)
         if proc is None:
             result["error"] = "profiling timed out after %ss" % timeout
