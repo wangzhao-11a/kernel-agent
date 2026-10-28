@@ -266,6 +266,18 @@ replay runs skip already-consumed responses.  `meta.json` now carries
 `context_chars`.  `scripts/context_selftest.py` covers compression and a real
 checkpoint/resume round trip on CPU.
 
+### Weighted shapes and the worst-shape gate (Phase 4.5)
+
+A task with `shape_set` is timed on **every training case**.  The reported
+`timing.speedup` is the weight-normalized mean (`weighted_speedup`), all per-case
+rows are kept under `timing.shape_cases`, and `timing.worst_case` names the
+slowest shape.  When more than one training case exists, a candidate fails with
+`fail_shape_gate` if its worst case is below `shape_gate_min_speedup` (default
+0.9, set 0 to disable).  Held-out cases remain correctness-only.  The bootstrap
+interval uses within-case resampling (`bootstrap_weighted_ratio`).
+`scripts/shape_gate_selftest.py` covers a passing candidate and a candidate that
+regresses on one shape.
+
 ---
 
 ## The RSI layer

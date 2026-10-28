@@ -235,6 +235,15 @@ def format_summary(result: dict) -> str:
         )
         if t.get("speedup_ci95"):
             lines.append("speedup CI95: [%.3f, %.3f]" % tuple(t["speedup_ci95"]))
+        cases = t.get("shape_cases") or []
+        if len(cases) > 1:
+            worst = t.get("worst_case") or {}
+            gate = t.get("shape_gate") or {}
+            lines.append("shapes: %d cases | weighted=%.3fx | worst=%s %.3fx%s" % (
+                len(cases), t.get("weighted_speedup", 0.0), worst.get("name"),
+                worst.get("speedup", 0.0),
+                (" | gate %s (>= %.3fx)" % ("ok" if gate.get("passed") else "FAILED",
+                                            gate.get("min_required", 0.0))) if gate else ""))
         roof = t.get("roofline") or {}
         if roof:
             parts = ["bottleneck=%s" % roof.get("bottleneck"),
@@ -487,18 +496,88 @@ def main(argv=None) -> int:
 
     speedup = base_t["median_ms"] / sol_t["median_ms"] if sol_t["median_ms"] > 0 else 0.0
     stability = abs(sol_t2["median_ms"] - sol_t["median_ms"]) / max(sol_t["median_ms"], 1e-9)
-    speedup_ci = stats_mod.bootstrap_ratio_ci(base_t.get("samples_ms"), sol_t.get("samples_ms"))
+
+    # One timing row per declared training case.  With a shape_set the reported
+    # speedup is the weight-normalized mean and every case is also kept so a
+    # single-regressing shape cannot hide behind a good average.
+    shape_cases = train_cases or [None]
+    rows = []
+    for idx, case in enumerate(shape_cases):
+        if idx == 0:
+            c_sol, c_base = sol_t, base_t
+        else:
+            try:
+                c_inputs = task.case_inputs(case, device, idx)
+                c_sol = bench_mod.benchmark(run, c_inputs, device, warmup, rep, flush,
+                                            policy=task.policy, policy_exempt=args.policy_exempt)
+                c_base = bench_mod.benchmark(_wrap_inference(baseline_fn), c_inputs, device,
+                                             warmup, rep, flush)
+            except pol.PolicyViolation as exc:
+                result["status"] = "fail_policy"
+                result["error"] = "policy violation during benchmark: %s%s" % (
+                    exc.code, (": " + exc.detail) if exc.detail else "")
+                return _finish(result, args.out, t_start)
+            except Exception:
+                result["status"] = "bench_error"
+                result["error"] = _tail(traceback.format_exc())
+                return _finish(result, args.out, t_start)
+        c_speed = c_base["median_ms"] / c_sol["median_ms"] if c_sol["median_ms"] > 0 else 0.0
+        rows.append({
+            "name": (case or {}).get("name") or "default",
+            "shape": (case or {}).get("shape"),
+            "dtype": (case or {}).get("dtype"),
+            "weight": float((case or {}).get("weight", 1.0)),
+            "solution_ms": c_sol["median_ms"],
+            "baseline_ms": c_base["median_ms"],
+            "speedup": round(c_speed, 4),
+            "samples_ms": c_sol.get("samples_ms"),
+            "baseline_samples_ms": c_base.get("samples_ms"),
+        })
+    if sum(r["weight"] for r in rows) <= 0:
+        for row in rows:
+            row["weight"] = 1.0
+    total_weight = sum(r["weight"] for r in rows) or float(len(rows))
+    weighted_speedup = (sum(r["weight"] * r["speedup"] for r in rows) / total_weight
+                        if len(rows) > 1 else speedup)
+    worst = min(rows, key=lambda r: r["speedup"])
+    if len(rows) > 1:
+        speedup_ci = stats_mod.bootstrap_weighted_ratio([
+            {"weight": r["weight"], "numerator": r["baseline_samples_ms"],
+             "denominator": r["samples_ms"]} for r in rows
+        ])
+    else:
+        speedup_ci = stats_mod.bootstrap_ratio_ci(base_t.get("samples_ms"), sol_t.get("samples_ms"))
+
+    gate_min = task.meta.get("shape_gate_min_speedup")
+    if gate_min is None and len(rows) > 1:
+        gate_min = 0.9
+    gate = None
+    if gate_min is not None:
+        gate = {"min_required": float(gate_min), "worst_case": worst["name"],
+                "worst_speedup": worst["speedup"],
+                "passed": bool(worst["speedup"] >= float(gate_min))}
     result["timing"] = {
         "solution": sol_t,
         "solution_second_pass": sol_t2,
         "baseline": base_t,
         "baseline_kind": b_kind,
         "baseline_fallback": baseline_fallback,
-        "speedup": round(speedup, 4),
+        "speedup": round(weighted_speedup, 4),
+        "weighted_speedup": round(weighted_speedup, 4),
         "speedup_ci95": speedup_ci,
+        "shape_cases": [{k: v for k, v in r.items()
+                         if k not in ("samples_ms", "baseline_samples_ms")} for r in rows],
+        "worst_case": {k: v for k, v in worst.items()
+                       if k not in ("samples_ms", "baseline_samples_ms")},
+        "shape_gate": gate,
         "stability_delta": round(stability, 4),
         "unit": "ms",
     }
+    if gate and not gate["passed"]:
+        result["status"] = "fail_shape_gate"
+        result["error"] = ("worst shape %s regressed to %.3fx (gate %.3fx)"
+                           % (gate["worst_case"], gate["worst_speedup"], gate["min_required"]))
+        return _finish(result, args.out, t_start)
     roof = roofline_mod.estimate(getattr(task, "workload", {}), sol_t["median_ms"], task.meta)
     if roof:
         result["timing"]["roofline"] = roof

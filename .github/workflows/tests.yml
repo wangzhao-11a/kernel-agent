@@ -42,3 +42,5 @@ jobs:
         run: python scripts/soft_scope_selftest.py
       - name: Context compression and checkpoint self-test
         run: python scripts/context_selftest.py
+      - name: Weighted shape gate self-test
+        run: python scripts/shape_gate_selftest.py
