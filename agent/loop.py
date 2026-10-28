@@ -115,6 +115,28 @@ def _memory_pseudo(result: dict) -> dict:
     }
 
 
+def _failure_text(result: dict) -> str:
+    parts = [_error_signature(result)]
+    trials = (result.get("correctness") or {}).get("trials") or []
+    for trial in trials:
+        if not trial.get("ok") and trial.get("error"):
+            parts.append(str(trial["error"]).splitlines()[0][:240])
+    return " ".join(p for p in parts if p)[:1000]
+
+
+def _similar_failure_hints(hits: list) -> str:
+    if not hits:
+        return ""
+    lines = ["Similar past failures (text match, NOT scope-matched; check relevance):"]
+    for hit in hits[:3]:
+        rec = hit["record"]
+        lines.append("- %s (%s) %s" % (hit["id"], rec.get("status") or "open",
+                                       str(rec.get("signature") or "")[:200]))
+        if rec.get("workaround"):
+            lines.append("  workaround: %s" % str(rec["workaround"])[:300])
+    return "\n".join(lines)
+
+
 def _error_signature(result: dict) -> str:
     """Stable signature for repeated-failure detection (strip PIDs/timestamps)."""
     raw = str(result.get("error") or "").strip()
@@ -166,6 +188,8 @@ def main(argv=None) -> int:
     ap.add_argument("--no-rsi", action="store_true", help="disable priors / attribution / distillation")
     ap.add_argument("--no-memory", action="store_true",
                     help="disable operator memory (facts/failures/skills) for this run")
+    ap.add_argument("--no-soft-scope", action="store_true",
+                    help="do not inject low-weight unverified analogies from mismatched scopes")
     ap.add_argument("--no-distill", action="store_true", help="do not update the strategy pool at the end")
     ap.add_argument("--verify-distill", action="store_true", help="replay attempts before distilling")
     ap.add_argument("--strict-provenance", action="store_true",
@@ -225,7 +249,8 @@ def main(argv=None) -> int:
     if not mem_prov.get("valid"):
         # mechanics-only run: file failures under cpu, not the claimed NPU scope
         mem_write_features["soc"] = "cpu"
-    memory_block = mem.context(mem_features, kinds=("fact", "failure", "skill")) if mem else ""
+    memory_block = (mem.context(mem_features, kinds=("fact", "failure", "skill"),
+                                allow_soft=not args.no_soft_scope) if mem else "")
     kb_cards = retrieve_cards(args.kb_root, feats, top_k=args.kb_cards, required_form=form) if use_rsi else []
     kb_block = render_candidates(kb_cards)
     kb_auto = None
@@ -438,18 +463,26 @@ def main(argv=None) -> int:
         }
         attempts_file.write(json.dumps(attempt, ensure_ascii=False) + "\n")
         attempts_file.flush()
+        similar_hits = []
         if mem:
             if status == "pass":
                 mem.resolve_failures(mem_write_features, run_name, "eval pass")
             else:
-                mem.record_failure_from_result(_memory_pseudo(result), mem_write_features,
-                                               run_name, task.name)
+                recorded = mem.record_failure_from_result(_memory_pseudo(result), mem_write_features,
+                                                          run_name, task.name)
+                query = _failure_text(result)
+                if query:
+                    similar_hits = [h for h in mem.similar_failures(query, top_k=4)
+                                    if h["id"] != (recorded or {}).get("id")]
 
         uses_kernel = bool((result.get("solution_features") or {}).get("uses_triton"))
         if better:
             best.update(status=status, speedup=speedup, path=path, uses_triton=uses_kernel)
 
         hints = failure_hints(matched, attempted_ids) if (use_rsi and status != "pass") else ""
+        similar_note = _similar_failure_hints(similar_hits) if status != "pass" else ""
+        if similar_note:
+            hints = (hints + "\n\n" + similar_note).strip()
         if repeat_note:
             hints = (hints + "\n\n" + repeat_note).strip()
         return build_feedback(iteration=it, status=status, summary=summary, speedup=speedup,

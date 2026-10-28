@@ -382,6 +382,77 @@ def scope_match(scope: dict, features: dict) -> tuple:
     return True, reasons, min(1.0, 0.55 + 0.08 * len(reasons))
 
 
+SOFT_WEIGHT = 0.2
+
+
+def soft_scope_match(scope: dict, features: dict) -> tuple:
+    """Low-weight analogy score for a scope that does not strictly match.
+
+    Requires a semantic overlap (op, op_family or form); dtype/soc/shape only
+    modulate the weight.  Returns (score, reasons, conflicts).  This is never a
+    substitute for a strict match: callers must label hits as unverified.
+    """
+    features = normalize_features(features)
+    scope = scope or {}
+    reasons, conflicts = [], []
+    score = 0.0
+
+    def overlap(key, weight):
+        nonlocal score
+        wanted = _as_list(scope.get(key))
+        if not wanted:
+            return False
+        actual = _as_list(features.get(key))
+        if not actual:
+            return False
+        shared = [a for a in actual if any(_contains(w, a) for w in wanted)]
+        if shared:
+            score += weight
+            reasons.append("%s~%s" % (key, ",".join(shared)))
+            return True
+        conflicts.append("%s differs: %s vs %s" % (key, actual, wanted))
+        return False
+
+    semantic = overlap("op", 0.4)
+    semantic |= overlap("op_family", 0.35)
+    semantic |= overlap("form", 0.15)
+    if not semantic:
+        return 0.0, [], conflicts
+
+    dtypes = _as_list(scope.get("dtype"))
+    actual_dtypes = _as_list(features.get("dtype"))
+    if dtypes and actual_dtypes:
+        dw = {_canonical_dtype(x) for x in dtypes}
+        da = {_canonical_dtype(x) for x in actual_dtypes}
+        if dw & da:
+            score += 0.1
+            reasons.append("dtype~%s" % ",".join(actual_dtypes))
+        else:
+            conflicts.append("dtype differs: %s vs %s" % (actual_dtypes, dtypes))
+            score -= 0.15
+    wanted_soc = _as_list(scope.get("soc"))
+    actual_soc = _as_list(features.get("soc"))
+    if wanted_soc and actual_soc:
+        if any(_contains(w, a) for w in wanted_soc for a in actual_soc):
+            score += 0.05
+            reasons.append("soc~%s" % ",".join(actual_soc))
+        else:
+            conflicts.append("soc differs: %s vs %s" % (actual_soc, wanted_soc))
+            score -= 0.05
+    shape_scope = scope.get("shape") or {}
+    sig = features.get("shape_signature") or {}
+    for key, wanted in shape_scope.items():
+        actual = sig.get(key)
+        same = actual in wanted if isinstance(wanted, list) else actual == wanted
+        if same:
+            score += 0.05
+            reasons.append("shape.%s~%s" % (key, actual))
+        elif actual is not None:
+            conflicts.append("shape.%s differs: %s vs %s" % (key, actual, wanted))
+    score = max(0.0, min(1.0, score))
+    return score, reasons, conflicts
+
+
 def _age_days(stamp: str) -> float:
     if not stamp:
         return 365.0
@@ -800,7 +871,7 @@ class MemoryStore:
             })
         return rows
 
-    def retrieve(self, features: dict, top_k: int = 3, kinds=None) -> list:
+    def retrieve(self, features: dict, top_k: int = 3, kinds=None, allow_soft: bool = False) -> list:
         features = normalize_features(features)
         kinds = set(kinds) if kinds else None
         hits = []
@@ -808,9 +879,21 @@ class MemoryStore:
         def add(row, kind, confidence, updated, status="", measured=None, authority="", record=None):
             record = record or row
             matched, reasons, match_score = scope_match(row.get("scope") or {}, features)
+            soft = False
             if not matched:
-                return
+                if not allow_soft:
+                    return
+                soft_score, soft_reasons, conflicts = soft_scope_match(
+                    row.get("scope") or {}, features)
+                if soft_score <= 0:
+                    return
+                soft = True
+                match_score = soft_score
+                reasons = (["UNVERIFIED analogy: scope does not match"] +
+                           soft_reasons + conflicts)
             score = TYPE_WEIGHT[kind] * (0.55 + 0.45 * match_score)
+            if soft:
+                score *= SOFT_WEIGHT
             score *= CONFIDENCE_WEIGHT.get(confidence, 0.4)
             score *= math.exp(-_age_days(updated) / 365.0)
             if kind == "fact":
@@ -834,6 +917,7 @@ class MemoryStore:
                 "record": record,
                 "score": round(score, 4),
                 "match": round(match_score, 3),
+                "soft": soft,
                 "why": reasons,
             })
 
@@ -853,18 +937,21 @@ class MemoryStore:
             add(row, "strategy", row.get("confidence") or "seed",
                 row.get("updated") or "", measured=None, record=row.get("record"))
 
-        hits.sort(key=lambda h: -h["score"])
-        per_type = {}
+        hits.sort(key=lambda h: (h["soft"], -h["score"]))
+        per_type = {
+            "strict:fact": 0, "strict:failure": 0, "strict:skill": 0, "strict:strategy": 0,
+            "soft:fact": 0, "soft:failure": 0, "soft:skill": 0, "soft:strategy": 0,
+        }
         limits = {"fact": 16, "failure": 4, "skill": 3, "strategy": 4}
         out = []
         for hit in hits:
             if kinds and hit["type"] not in kinds:
                 continue
-            limit = limits.get(hit["type"], top_k)
-            per_type.setdefault(hit["type"], 0)
-            if per_type[hit["type"]] >= limit:
+            label = ("soft:" if hit["soft"] else "strict:") + hit["type"]
+            limit = 2 if hit["soft"] else limits.get(hit["type"], top_k)
+            if per_type.get(label, 0) >= limit:
                 continue
-            per_type[hit["type"]] += 1
+            per_type[label] = per_type.get(label, 0) + 1
             out.append(hit)
         return out
 
@@ -922,12 +1009,17 @@ class MemoryStore:
         hits.sort(key=lambda h: -h["score"])
         return hits[:max(1, int(top_k))]
 
-    def context(self, features: dict, top_k: int = 3, max_chars: int = 10000, kinds=None) -> str:
-        hits = self.retrieve(features, top_k=top_k, kinds=kinds)
+    def similar_failures(self, text: str, top_k: int = 3) -> list:
+        """Text-similarity retrieval of past failures (unscoped; includes resolved ones)."""
+        return self.search_text(text, top_k=top_k, kinds=("failure",))
+
+    def context(self, features: dict, top_k: int = 3, max_chars: int = 10000, kinds=None,
+                allow_soft: bool = False) -> str:
+        hits = self.retrieve(features, top_k=top_k, kinds=kinds, allow_soft=allow_soft)
         features = normalize_features(features)
         if not hits:
             return "## Operator memory\n(no fact/failure/skill/strategy matched this scope)"
-        lines = ["## Operator memory (scope-matched; apply only what matches the current run)"]
+        lines = ["## Operator memory (strict scope matches first; UNVERIFIED analogies last)"]
         labels = {"fact": "FACT", "failure": "FAILURE", "skill": "SKILL", "strategy": "STRATEGY"}
         for hit in hits:
             record = hit["record"]
@@ -938,10 +1030,14 @@ class MemoryStore:
                 what = record.get("statement") or ""
             if len(what) > 500:
                 what = what[:500] + "…"
-            lines.append("- [%s %s] (%s) %s" % (
-                labels[kind], hit["id"],
+            tag = "UNVERIFIED ANALOGY " if hit.get("soft") else ""
+            lines.append("- [%s%s %s] (%s) %s" % (
+                tag, labels[kind], hit["id"],
                 record.get("confidence") or record.get("status") or "candidate", what))
             lines.append("    why: %s" % ", ".join(hit["why"]))
+            if hit.get("soft"):
+                lines.append("    action: verify with one experiment before relying on it; "
+                             "do not copy conditions across scopes blindly.")
             if kind == "fact" and record.get("authority"):
                 lines.append("    authority: %s" % record["authority"])
             if kind == "failure":

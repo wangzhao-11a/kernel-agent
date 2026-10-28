@@ -241,6 +241,18 @@ budget accounting and the seeded ranking.
   mistaken for a condition-matched prior.
 - `scripts/roofline_selftest.py` covers both on CPU.
 
+### Soft scope and failure similarity (Phase 4.3)
+
+Strict retrieval is unchanged: a fact/failure/skill whose scope contradicts the
+current run is never presented as applicable.  The agent prompt additionally
+receives a low-weight **analogy** layer (`soft_scope_match`, 20% weight, at most
+two per kind) for records that share the op/op_family/form but differ in
+SoC/dtype/shape.  Every such record is prefixed `UNVERIFIED ANALOGY` and carries
+"verify with one experiment"; `--no-soft-scope` disables the layer.  Failed
+attempts also query past failures by text similarity
+(`MemoryStore.similar_failures`) and surface their workaround, marked as
+not scope-matched.  `scripts/soft_scope_selftest.py` pins the separation.
+
 ---
 
 ## The RSI layer
