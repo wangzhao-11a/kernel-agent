@@ -253,6 +253,19 @@ attempts also query past failures by text similarity
 (`MemoryStore.similar_failures`) and surface their workaround, marked as
 not scope-matched.  `scripts/soft_scope_selftest.py` pins the separation.
 
+### Long trajectories: compression, resume, per-turn accounting (Phase 4.4)
+
+When the conversation exceeds `--max-context-chars` (default 60000), the loop
+keeps the task prompt and the last `--keep-recent` messages and folds everything
+else into a structured summary (evaluation counts, best result, strategies tried,
+recent errors).  The agent can call `read_solution` to re-read the current code
+after compression.  Every turn writes `checkpoint.json` (messages, best, current
+path, usage, call count) atomically; `--resume <run_dir>` continues from it, and
+replay runs skip already-consumed responses.  `meta.json` now carries
+`token_usage_by_iteration`, and each assistant transcript row carries `usage` and
+`context_chars`.  `scripts/context_selftest.py` covers compression and a real
+checkpoint/resume round trip on CPU.
+
 ---
 
 ## The RSI layer

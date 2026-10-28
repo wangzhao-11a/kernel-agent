@@ -40,3 +40,5 @@ jobs:
         run: python scripts/roofline_selftest.py
       - name: Soft-scope and failure-similarity self-test
         run: python scripts/soft_scope_selftest.py
+      - name: Context compression and checkpoint self-test
+        run: python scripts/context_selftest.py

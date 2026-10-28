@@ -24,6 +24,7 @@ including fully offline (replay) runs for testing.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import re
@@ -35,6 +36,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from agent import context as context_mod  # noqa: E402
 from agent import llm as llm_mod  # noqa: E402
 from agent.prompts import build_feedback, build_task_prompt, system_prompt  # noqa: E402
 from harness import device as dev  # noqa: E402
@@ -164,6 +166,12 @@ def main(argv=None) -> int:
     ap.add_argument("--keep-going", action="store_true", help="keep iterating after the target is reached")
     ap.add_argument("--tune-max-variants", type=int, default=6,
                     help="maximum rendered variants for one tune action")
+    ap.add_argument("--max-context-chars", type=int, default=60000,
+                    help="compress the trajectory when prompt+history exceeds this many chars (0 disables)")
+    ap.add_argument("--keep-recent", type=int, default=4,
+                    help="verbatim messages kept after context compression")
+    ap.add_argument("--resume", default="",
+                    help="resume from a previous run directory's checkpoint.json")
     ap.add_argument("--replay-file", default=None)
     ap.add_argument("--device", default="auto")
     ap.add_argument("--hardware", default="", help="hardware label for strategy matching (default: task meta / device)")
@@ -281,8 +289,15 @@ def main(argv=None) -> int:
         replayer = llm_mod.ReplayModel(replay_payload.get("responses", []))
     policy_exempt = bool(args.policy_exempt or replay_exempt)
 
-    run_name = "%s_%s" % (datetime.now().strftime("%Y%m%d-%H%M%S"), task.name)
-    run_dir = os.path.join(args.out_dir, run_name)
+    if args.resume:
+        run_dir = os.path.abspath(args.resume)
+        run_name = os.path.basename(os.path.normpath(run_dir))
+        if not os.path.isfile(os.path.join(run_dir, "checkpoint.json")):
+            print("ERROR: no checkpoint.json in --resume %s" % run_dir)
+            return 2
+    else:
+        run_name = "%s_%s" % (datetime.now().strftime("%Y%m%d-%H%M%S"), task.name)
+        run_dir = os.path.join(args.out_dir, run_name)
     os.makedirs(run_dir, exist_ok=True)
     transcript_jsonl = open(os.path.join(run_dir, "transcript.jsonl"), "a", encoding="utf-8")
     transcript_md = open(os.path.join(run_dir, "transcript.md"), "a", encoding="utf-8")
@@ -309,17 +324,40 @@ def main(argv=None) -> int:
                                      exemplars=exemplar_block, knowledge=kb_block, form=form_block,
                                      memory=memory_block)
     log("system", sys_prompt)
-    log("user", first_prompt)
-    messages = [{"role": "user", "content": first_prompt}]
+    resume = None
+    if args.resume:
+        with open(os.path.join(run_dir, "checkpoint.json"), "r", encoding="utf-8") as fh:
+            resume = json.load(fh)
+        if resume.get("task") and resume["task"] != task.name:
+            print("ERROR: checkpoint task %r does not match --task %r"
+                  % (resume["task"], task.name))
+            return 2
+        messages = list(resume.get("messages") or [{"role": "user", "content": first_prompt}])
+        log("system", "resumed from checkpoint at iteration %s (llm_calls=%s)"
+            % (resume.get("iteration"), resume.get("llm_calls")))
+    else:
+        log("user", first_prompt)
+        messages = [{"role": "user", "content": first_prompt}]
 
-    best = {"status": None, "speedup": 0.0, "path": None}
-    current_path = None
+    start_iteration = (int(resume.get("iteration") or 0) + 1) if resume else 1
+    if resume and int(resume.get("max_iters") or 0) > max_iters:
+        max_iters = int(resume["max_iters"])
+    best = (resume or {}).get("best") or {"status": None, "speedup": 0.0, "path": None}
+    current_path = (resume or {}).get("current_path")
     strikes = 0
-    passed_count = 0
-    nudge_count = 0
-    finisher = None
-    usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-    iteration = 0
+    passed_count = int((resume or {}).get("passed_count") or 0)
+    nudge_count = int((resume or {}).get("nudge_count") or 0)
+    finisher = (resume or {}).get("finisher")
+    usage_total = dict((resume or {}).get("usage_total") or
+                       {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+    usage_by_iteration = list((resume or {}).get("token_usage_by_iteration") or [])
+    llm_calls = int((resume or {}).get("llm_calls") or 0)
+    if resume:
+        kb_reads = list(resume.get("kb_reads") or [])
+        attempted_ids = set(resume.get("attempted_ids") or [])
+    iteration = start_iteration - 1
+    if replayer is not None:
+        replayer.index = llm_calls
 
     def do_profile(path: str, it: int):
         """Profile the current solution in a subprocess; returns (text, meta)."""
@@ -343,10 +381,66 @@ def main(argv=None) -> int:
                 "out_dir": res.get("out_dir")}
         return text, meta
 
-    repeat_sig = ""
-    repeat_count = 0
+    repeat_sig = (resume or {}).get("repeat_sig") or ""
+    repeat_count = int((resume or {}).get("repeat_count") or 0)
     repeat_stop = False
     max_repeat_errors = int(args.max_repeat_errors or 0)
+
+    def trajectory_summary() -> str:
+        rows = []
+        attempts_path = os.path.join(run_dir, "attempts.jsonl")
+        try:
+            with open(attempts_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        rows.append(json.loads(line))
+                    except ValueError:
+                        continue
+        except OSError:
+            pass
+        counts = {}
+        for row in rows:
+            status = str(row.get("status") or "unknown")
+            counts[status] = counts.get(status, 0) + 1
+        strategies = sorted({s for row in rows for s in (row.get("strategies_used") or [])})
+        lines = ["- evaluations: " + (", ".join("%s=%d" % kv for kv in sorted(counts.items())) or "none"),
+                 "- best: %s at %.3fx (%s)" % (best.get("status"), float(best.get("speedup") or 0.0),
+                                               best.get("path") or "no path")]
+        if strategies:
+            lines.append("- strategies tried: " + ", ".join(strategies[:10]))
+        errors = [str(row.get("error") or "").splitlines()[0][:160]
+                  for row in rows if row.get("error")]
+        if errors:
+            lines.append("- recent errors: " + " | ".join(errors[-3:]))
+        return "\n".join(lines)
+
+    def save_checkpoint(it: int) -> None:
+        payload = {
+            "schema_version": 1,
+            "task": task.name,
+            "run_id": run_name,
+            "iteration": it,
+            "max_iters": max_iters,
+            "llm_calls": llm_calls,
+            "messages": messages,
+            "best": best,
+            "current_path": current_path,
+            "passed_count": passed_count,
+            "nudge_count": nudge_count,
+            "finisher": finisher,
+            "usage_total": usage_total,
+            "token_usage_by_iteration": usage_by_iteration,
+            "kb_reads": kb_reads,
+            "attempted_ids": sorted(attempted_ids),
+            "repeat_sig": repeat_sig,
+            "repeat_count": repeat_count,
+            "saved_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        path = os.path.join(run_dir, "checkpoint.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+        os.replace(tmp, path)
 
     def evaluate(path: str, it: int, declared, expected) -> str:
         nonlocal passed_count, repeat_sig, repeat_count, repeat_stop
@@ -488,7 +582,15 @@ def main(argv=None) -> int:
         return build_feedback(iteration=it, status=status, summary=summary, speedup=speedup,
                               best=best, hints=hints, profiling=profile_text)
 
-    for iteration in range(1, max_iters + 1):
+    for iteration in range(start_iteration, max_iters + 1):
+        if (args.max_context_chars > 0
+                and context_mod.context_chars(messages) > args.max_context_chars):
+            before = context_mod.context_chars(messages)
+            messages = context_mod.compress_messages(
+                messages, trajectory_summary(), keep_recent=args.keep_recent)
+            after = context_mod.context_chars(messages)
+            log("system", "context compressed: %d -> %d chars at iteration %d"
+                % (before, after, iteration))
         try:
             reply = llm_mod.chat(
                 messages, system=sys_prompt, provider=provider, model=model, base_url=base_url,
@@ -503,8 +605,17 @@ def main(argv=None) -> int:
         usage = reply.get("usage") or {}
         for key in usage_total:
             usage_total[key] += int(usage.get(key, 0) or 0)
+        llm_calls += 1
+        usage_by_iteration.append({
+            "iteration": iteration,
+            "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+            "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
+            "total_tokens": int(usage.get("total_tokens", 0) or 0),
+            "context_chars": context_mod.context_chars(messages),
+        })
         messages.append({"role": "assistant", "content": text})
-        log("assistant", text, meta={"iteration": iteration})
+        log("assistant", text, meta={"iteration": iteration, "usage": usage,
+                                     "context_chars": context_mod.context_chars(messages)})
 
         action, err = parse_action(text)
         if err:
@@ -519,6 +630,7 @@ def main(argv=None) -> int:
                            "Reply with exactly one JSON object and nothing else." % err)
             messages.append({"role": "user", "content": message})
             log("user", message)
+            save_checkpoint(iteration)
             if strikes >= 3:
                 log("system", "aborting: too many unparsable replies")
                 break
@@ -653,6 +765,17 @@ def main(argv=None) -> int:
                     message = ("\n".join(lines) +
                                "\nApply a record only if its scope matches this task; otherwise treat it "
                                "as an unverified analogy at low weight. Reply with exactly one JSON action.")
+        elif kind == "read_solution":
+            target = current_path or best.get("path")
+            if not target or not os.path.isfile(target):
+                message = "No solution file exists yet. Use write_solution first."
+            else:
+                with open(target, "r", encoding="utf-8", errors="replace") as fh:
+                    source = fh.read()
+                log("read_solution", "read %s (%d chars)" % (target, len(source)),
+                    meta={"iteration": iteration})
+                message = ("Current solution (%s):\n```python\n%s\n```\n"
+                           "Reply with exactly one JSON action." % (target, source[:40000]))
         elif kind == "profile":
             if args.profiler == "off":
                 message = "Profiling is disabled (--profiler off). Use write_solution / run_eval / finish."
@@ -677,6 +800,7 @@ def main(argv=None) -> int:
 
         messages.append({"role": "user", "content": message})
         log("user", message)
+        save_checkpoint(iteration)
 
         if repeat_stop:
             log("system", "stopping: repeated failure %d times" % repeat_count)
@@ -733,6 +857,9 @@ def main(argv=None) -> int:
         "target_speedup": target,
         "finish_summary": finisher,
         "usage": usage_total,
+        "token_usage_by_iteration": usage_by_iteration,
+        "resumed_from": (os.path.abspath(args.resume) if args.resume else None),
+        "checkpoint": os.path.join(run_dir, "checkpoint.json"),
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
     _write_meta(run_dir, meta)

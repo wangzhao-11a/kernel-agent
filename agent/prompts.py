@@ -35,6 +35,8 @@ Reply with exactly ONE JSON object, no prose outside it:
       established, instead of rewriting the same code with different constants.
   {{"action": "run_eval"}}
       Re-evaluate the current solution unchanged.
+  {{"action": "read_solution"}}
+      Print the current solution source (useful after the trajectory was compressed).
   {{"action": "profile"}}
       Profile the current solution (op-level self-time breakdown) to guide the next change.
   {{"action": "memory", "query": "<free text>"}}
