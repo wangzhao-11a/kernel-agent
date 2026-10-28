@@ -201,6 +201,31 @@ python -m agent.cannbench_loop \
     --max-iters 6 --api-key-env KERNEL_AGENT_API_KEY
 ```
 
+## Search and meta-eval (Phase 3)
+
+`rsi/search.py` implements search policies over a synthetic operator terrain
+(`rsi/terrain.py`): the original single chain, best-first beam, UCB and Thompson
+bandits over tile/split/mode moves, and staged cheap screening.  `scripts/meta_eval.py`
+runs them under a fixed evaluation and token budget and compares multi-seed
+success/best distributions.
+
+The tagged baseline `baseline-single-chain-v1` (5 seeds, 40 evaluations,
+6000 tokens, CPU synthetic terrain) is in `data/meta_eval/`.  The Phase-3
+comparison (`data/meta_eval/phase3-search-compare.json`) is:
+
+| policy | pass@1 | best mean | best min | best max | tokens |
+|---|---|---|---|---|---|
+| single-chain | 0.60 | 2.328 | 1.930 | 2.753 | 4800 |
+| beam | 0.20 | 2.049 | 1.864 | 2.595 | 4800 |
+| UCB | 1.00 | 3.080 | 2.558 | 3.442 | 4800 |
+| Thompson | 1.00 | 3.283 | 2.479 | 3.662 | 4800 |
+| staged | 1.00 | 2.811 | 2.476 | 3.225 | 2010 |
+
+Bandit allocation and staged screening beat the single chain on this terrain;
+the current best-first beam does not.  These are CPU synthetic mechanism results,
+not hardware/operator performance claims.  `scripts/search_selftest.py` pins the
+budget accounting and the seeded ranking.
+
 ---
 
 ## The RSI layer

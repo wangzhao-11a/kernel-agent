@@ -32,3 +32,5 @@ jobs:
         run: python scripts/causality_selftest.py
       - name: Meta-eval smoke
         run: python scripts/meta_eval.py --tag ci-smoke --seeds 2 --evals 8 --tokens 1200 --threshold 2.2
+      - name: Search policy self-test
+        run: python scripts/search_selftest.py
