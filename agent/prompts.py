@@ -28,6 +28,11 @@ Reply with exactly ONE JSON object, no prose outside it:
    "expected_speedup": 1.25}}
       strategies / expected_speedup are optional but strongly encouraged: they feed the
       strategy pool (calibration + evidence) for this and later tasks.
+  {{"action": "tune", "content": "<template with {{{{NAME}}}} placeholders>",
+   "params": {{"NAME": [1024, 2048, 4096]}}}}
+      Keep the structural template fixed and search only the declared numeric axes
+      on a bounded grid (tile/block/split/threads). Use it after correctness is
+      established, instead of rewriting the same code with different constants.
   {{"action": "run_eval"}}
       Re-evaluate the current solution unchanged.
   {{"action": "profile"}}

@@ -50,6 +50,7 @@ from rsi.exemplars import render_exemplars, retrieve_exemplars  # noqa: E402
 from rsi.features import hardware_from_device, task_features  # noqa: E402
 from rsi.forms import form_for, form_hint  # noqa: E402
 from rsi.memory import MemoryStore  # noqa: E402
+from rsi import params as params_mod  # noqa: E402
 from rsi.provenance import provenance  # noqa: E402
 from rsi.retrieve import combos_for, failure_hints, priors_block, retrieve  # noqa: E402
 from rsi.store import DEFAULT_ROOT as DEFAULT_KNOWLEDGE_ROOT  # noqa: E402
@@ -139,6 +140,8 @@ def main(argv=None) -> int:
     ap.add_argument("--max-iters", type=int, default=None)
     ap.add_argument("--target-speedup", type=float, default=None)
     ap.add_argument("--keep-going", action="store_true", help="keep iterating after the target is reached")
+    ap.add_argument("--tune-max-variants", type=int, default=6,
+                    help="maximum rendered variants for one tune action")
     ap.add_argument("--replay-file", default=None)
     ap.add_argument("--device", default="auto")
     ap.add_argument("--hardware", default="", help="hardware label for strategy matching (default: task meta / device)")
@@ -504,6 +507,69 @@ def main(argv=None) -> int:
                 with open(current_path, "w", encoding="utf-8") as fh:
                     fh.write(content)
                 message = evaluate(current_path, iteration, declared, expected)
+        elif kind == "tune":
+            content = action.get("content")
+            raw_space = action.get("params")
+            if not isinstance(content, str) or not content.strip():
+                message = ("tune needs a non-empty 'content' template with {{PARAM}} placeholders "
+                           "and a 'params' object.")
+            else:
+                try:
+                    space = params_mod.parse_space(raw_space)
+                    check = params_mod.validate(content, space)
+                    if not check["ok"]:
+                        raise params_mod.ParamError(
+                            "template/params mismatch: placeholders=%s declared=%s missing=%s unused=%s"
+                            % (check["placeholders"], check["declared"],
+                               check["missing_declaration"], check["unused"]))
+                    variants = params_mod.grid(space, args.tune_max_variants, seed=iteration)
+                except params_mod.ParamError as exc:
+                    message = "tune rejected: %s" % exc
+                else:
+                    rows = []
+                    best_tune = None
+                    for idx, values in enumerate(variants):
+                        try:
+                            rendered = params_mod.render(content, values)
+                        except params_mod.ParamError as exc:
+                            message = "tune render failed: %s" % exc
+                            break
+                        path = os.path.join(run_dir, "tune_iter%02d_var%02d.py" % (iteration, idx))
+                        with open(path, "w", encoding="utf-8") as fh:
+                            fh.write(rendered)
+                        res = run_evaluation(
+                            task=args.task, solution=path, device=args.device,
+                            timeout=args.timeout, warmup=args.warmup, rep=args.rep,
+                            trials=args.trials, require=args.require or None,
+                            policy_exempt=policy_exempt, run_id=run_name, iteration=iteration,
+                            out_dir=os.path.join(run_dir, "tune-%02d" % iteration),
+                            results_file=args.results_file, quiet=True,
+                        )
+                        status = res.get("status") or "unknown"
+                        speed = float((res.get("timing") or {}).get("speedup") or 0.0)
+                        log("harness", format_summary(res),
+                            meta={"iteration": iteration, "tune_variant": idx, "params": values})
+                        rows.append({"idx": idx, "params": values, "status": status,
+                                     "speedup": speed, "path": path,
+                                     "uses_triton": bool((res.get("solution_features") or {}).get("uses_triton"))})
+                        if status == "pass" and (best_tune is None or speed > best_tune["speedup"]):
+                            best_tune = rows[-1]
+                    if rows:
+                        chosen = best_tune or max(rows, key=lambda r: r["speedup"])
+                        current_path = chosen["path"]
+                        if best_tune and (best.get("status") != "pass"
+                                          or best_tune["speedup"] > float(best.get("speedup") or 0.0)):
+                            best.update(status="pass", speedup=best_tune["speedup"],
+                                        path=best_tune["path"], uses_triton=best_tune["uses_triton"])
+                        table = "\n".join(
+                            "  %s -> %s %.3fx" % (r["params"], r["status"], r["speedup"])
+                            for r in rows)
+                        message = ("Tuned %d/%d variants (structure kept, numeric axes searched):\n%s\n"
+                                   "Best variant: %s (%s, %.3fx). The current solution is the best variant."
+                                   % (len(rows), len(variants), table, chosen["params"],
+                                      chosen["status"], chosen["speedup"]))
+                    else:
+                        message = "tune produced no variants."
         elif kind == "run_eval":
             if current_path is None:
                 message = "No solution submitted yet. Use write_solution first."
