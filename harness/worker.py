@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import re
+import statistics
 import time
 import traceback
 from datetime import datetime, timezone
@@ -20,6 +21,7 @@ from datetime import datetime, timezone
 from . import benchmark as bench_mod
 from . import correctness as corr_mod
 from . import device as dev
+from . import policy as pol
 from .tasks import TaskLoadError, load_task
 
 
@@ -68,6 +70,85 @@ def suspicion_report(task, solution_path: str, solution_module) -> list:
         if vf and os.path.abspath(str(vf)) == task_file:
             reasons.append("solution holds a reference to the task module (%s)" % name)
     return reasons
+
+
+def policy_report(task, solution_path: str, solution_module, policy: dict) -> dict:
+    """Auxiliary AST/static checks plus kernel evidence for a strict task."""
+    try:
+        with open(solution_path, "r", encoding="utf-8", errors="replace") as fh:
+            source = fh.read()
+    except OSError:
+        source = ""
+    findings = pol.audit_source(source, os.path.splitext(os.path.basename(task.path))[0])
+    evidence = pol.kernel_evidence(source, solution_module)
+    errors = []
+    for f in findings:
+        if f["code"] in ("reference_import", "dynamic_import", "dynamic_exec"):
+            errors.append(f)
+        elif policy.get("forbid_native_compute") and f["code"] == "native_compute":
+            errors.append(f)
+        elif policy.get("forbid_numpy_compute") and f["code"] == "numpy_compute":
+            errors.append(f)
+        elif policy.get("forbid_reference") and f["code"] in ("reference_call", "reference_ref"):
+            errors.append(f)
+    if policy.get("require_kernel") and not evidence.get("any"):
+        errors.append({"severity": "error", "code": "kernel_evidence_missing",
+                       "message": "task requires a real kernel; no triton @jit/cpp_extension/CANN marker found"})
+    return {"findings": findings, "errors": errors, "kernel_evidence": evidence}
+
+
+def _clone_inputs(inputs):
+    out = []
+    for x in inputs:
+        if hasattr(x, "clone"):
+            out.append(x.clone())
+        elif hasattr(x, "copy"):
+            out.append(x.copy())
+        else:
+            out.append(x)
+    return out
+
+
+def _run_case(task, run, device, inputs, policy, policy_exempt, allow_nonfinite):
+    """Reference + candidate for one input set, with the runtime policy guard."""
+    ref = task.reference(*inputs)
+    try:
+        with pol.policy_guard(policy, policy_exempt):
+            out = run(*_clone_inputs(inputs))
+    except pol.PolicyViolation as exc:
+        return {"ok": False, "policy_violation": {"code": exc.code, "detail": exc.detail},
+                "reason": "policy violation: %s%s" % (exc.code, (": " + exc.detail) if exc.detail else "")}
+    except Exception as exc:
+        return {"ok": False, "reason": "%s: %s" % (type(exc).__name__, exc)}
+    res = corr_mod.compare_outputs(ref, out, float(task.tolerance.get("atol", 1e-5)),
+                                   float(task.tolerance.get("rtol", 1e-5)),
+                                   allow_nonfinite=allow_nonfinite)
+    return res
+
+
+def heldout_report(task, run, device, policy, policy_exempt, allow_nonfinite):
+    """Evaluate held-out shapes (or a fresh trial seed for legacy single-shape tasks)."""
+    cases = task.cases("heldout")
+    checked = []
+    if cases:
+        for case in cases:
+            inputs = task.case_inputs(case, device, 0)
+            res = _run_case(task, run, device, inputs, policy, policy_exempt, allow_nonfinite)
+            checked.append({"name": case["name"], "shape": case.get("shape"),
+                            "dtype": case.get("dtype"), **res})
+            if not res.get("ok"):
+                return {"ok": False, "cases": checked,
+                        "reason": "held-out case %s: %s" % (case["name"], res.get("reason"))}
+        return {"ok": True, "cases": checked, "reason": None}
+    if not policy_exempt and (policy.get("forbid_native_compute") or policy.get("require_kernel")):
+        inputs = task.make_inputs(device, int(task.num_trials) + 7)
+        res = _run_case(task, run, device, inputs, policy, policy_exempt, allow_nonfinite)
+        checked.append({"name": "fresh-seed", "shape": None, "dtype": None, **res})
+        if not res.get("ok"):
+            return {"ok": False, "cases": checked,
+                    "reason": "fresh-seed check: %s" % res.get("reason")}
+        return {"ok": True, "cases": checked, "reason": None}
+    return None
 
 
 def _wrap_inference(fn):
@@ -150,6 +231,17 @@ def format_summary(result: dict) -> str:
                 100.0 * t.get("stability_delta", 0.0),
             )
         )
+    if result.get("policy_strict"):
+        lines.append("policy: strict (native compute forbidden%s)" % (
+            ", kernel required" if (result.get("policy") or {}).get("require_kernel") else ""))
+    held = result.get("heldout") or {}
+    if held.get("cases"):
+        lines.append("held-out: %s (%d case(s))" % (
+            "ok" if held.get("ok") else "FAILED", len(held["cases"])))
+    audit = result.get("policy_audit") or {}
+    if audit.get("cache_suspected") or audit.get("side_stream_suspected"):
+        lines.append("policy audit: cache=%s side_stream=%s" % (
+            audit.get("cache_suspected"), audit.get("side_stream_suspected")))
     if result.get("suspicious"):
         lines.append("suspicious: %s" % "; ".join(result.get("suspicious_reasons") or []))
     if result.get("status") != "pass" and result.get("error"):
@@ -181,6 +273,8 @@ def main(argv=None) -> int:
     ap.add_argument("--flush-l2", dest="flush_l2", action="store_true", default=None)
     ap.add_argument("--no-flush-l2", dest="flush_l2", action="store_false")
     ap.add_argument("--fail-on-suspicious", action="store_true")
+    ap.add_argument("--policy-exempt", action="store_true",
+                    help="legacy/reference/replay run: skip strict task policy checks")
     ap.add_argument("--ignore-require", action="store_true",
                     help="skip harness-enforced task requirements (require: [...])")
     ap.add_argument("--require", default="",
@@ -192,6 +286,7 @@ def main(argv=None) -> int:
     t_start = time.time()
     device = dev.resolve_device(args.device)
     result = {
+        "schema_version": 1,
         "task": None,
         "task_file": os.path.abspath(args.task),
         "level": None,
@@ -203,6 +298,10 @@ def main(argv=None) -> int:
         "error": None,
         "suspicious": False,
         "suspicious_reasons": [],
+        "policy": None,
+        "policy_exempt": bool(args.policy_exempt),
+        "policy_findings": [],
+        "heldout": None,
         "correctness": None,
         "timing": None,
         "run_id": args.run_id,
@@ -226,6 +325,12 @@ def main(argv=None) -> int:
 
     result["task"] = task.name
     result["level"] = task.level
+    result["policy"] = task.policy
+    result["task_schema_version"] = task.schema_version
+    strict = bool(not args.policy_exempt and (
+        task.policy.get("forbid_native_compute") or task.policy.get("require_kernel")
+        or task.policy.get("forbid_numpy_compute")))
+    result["policy_strict"] = strict
     result["task_tags"] = [str(t) for t in (task.meta.get("tags") or [])]
     result["task_op_class"] = str(task.meta.get("op_class") or "")
     result["task_hardware"] = str(task.meta.get("hardware") or "")
@@ -245,13 +350,22 @@ def main(argv=None) -> int:
         return _finish(result, args.out, t_start)
 
     reasons = suspicion_report(task, args.solution, solution)
+    p_report = policy_report(task, args.solution, solution, task.policy)
+    result["policy_findings"] = p_report["findings"]
+    result["kernel_evidence"] = p_report["kernel_evidence"]
+    # Legacy tasks and explicitly exempt runs record findings but are not blocked.
+    blocking = [] if (args.policy_exempt or task.policy.get("torch_fused_exempt")) else list(p_report["errors"])
     if reasons:
         result["suspicious"] = True
         result["suspicious_reasons"] = reasons
-        if args.fail_on_suspicious:
-            result["status"] = "fail_suspicious"
-            result["error"] = "; ".join(reasons)
-            return _finish(result, args.out, t_start)
+        if strict or args.fail_on_suspicious:
+            blocking.extend({"severity": "error", "code": "suspicious",
+                             "message": r} for r in reasons)
+    if blocking:
+        result["status"] = "fail_policy"
+        result["error"] = "; ".join(f.get("message", "") for f in blocking)
+        result["policy_violations"] = blocking
+        return _finish(result, args.out, t_start)
 
     # harness-enforced task requirements, e.g. TASK["require"] = ["triton"] (+ run-level --require)
     requires = [str(r).lower() for r in (task.meta.get("require") or [])]
@@ -278,22 +392,44 @@ def main(argv=None) -> int:
     trials = args.trials if args.trials is not None else task.num_trials
     flush = task.flush_l2 if args.flush_l2 is None else args.flush_l2
 
+    allow_nonfinite = bool(task.policy.get("allow_nonfinite"))
     try:
-        c_res = corr_mod.run_correctness(task, run, device, trials)
+        c_res = corr_mod.run_correctness(
+            task, run, device, trials, policy=task.policy,
+            policy_exempt=args.policy_exempt, allow_nonfinite=allow_nonfinite)
+    except pol.PolicyViolation as exc:
+        result["status"] = "fail_policy"
+        result["error"] = "policy violation: %s%s" % (exc.code, (": " + exc.detail) if exc.detail else "")
+        return _finish(result, args.out, t_start)
     except Exception:
         result["status"] = "crash"
         result["error"] = _tail(traceback.format_exc())
         return _finish(result, args.out, t_start)
     result["correctness"] = c_res
     if not c_res.get("ok"):
-        result["status"] = "fail_correctness"
+        result["status"] = "fail_policy" if c_res.get("policy_violation") else "fail_correctness"
         result["error"] = c_res.get("reason")
         return _finish(result, args.out, t_start)
 
+    held = heldout_report(task, run, device, task.policy, args.policy_exempt, allow_nonfinite)
+    result["heldout"] = held
+    if held and not held.get("ok"):
+        result["status"] = "fail_holdout"
+        result["error"] = held.get("reason")
+        return _finish(result, args.out, t_start)
+
     try:
-        inputs = task.make_inputs(device, 0)
-        sol_t = bench_mod.benchmark(run, inputs, device, warmup, rep, flush)
-        sol_t2 = bench_mod.benchmark(run, inputs, device, max(1, warmup // 2), max(20, rep // 2), flush)
+        train_cases = task.cases("train")
+        inputs = task.case_inputs(train_cases[0], device, 0) if train_cases else task.make_inputs(device, 0)
+        sol_t = bench_mod.benchmark(run, inputs, device, warmup, rep, flush,
+                                    policy=task.policy, policy_exempt=args.policy_exempt)
+        sol_t2 = bench_mod.benchmark(run, inputs, device, max(1, warmup // 2), max(20, rep // 2), flush,
+                                     policy=task.policy, policy_exempt=args.policy_exempt)
+    except pol.PolicyViolation as exc:
+        result["status"] = "fail_policy"
+        result["error"] = "policy violation during benchmark: %s%s" % (
+            exc.code, (": " + exc.detail) if exc.detail else "")
+        return _finish(result, args.out, t_start)
     except Exception:
         result["status"] = "bench_error"
         result["error"] = _tail(traceback.format_exc())
@@ -348,6 +484,61 @@ def main(argv=None) -> int:
         "stability_delta": round(stability, 4),
         "unit": "ms",
     }
+
+    # Strict tasks are audited for two timing escapes: cached outputs on the
+    # repeated benchmark input, and work launched on a side stream.  The audit
+    # itself is not used as the reported timing.
+    audit = {"cache_suspected": False, "side_stream_suspected": False,
+             "cache_checked": False, "side_stream_checked": False}
+    if strict:
+        try:
+            train_cases = task.cases("train")
+            if train_cases:
+                fresh_inputs = task.case_inputs(train_cases[0], device, 11)
+            else:
+                fresh_inputs = task.make_inputs(device, int(trials) + 11)
+            fresh_t = bench_mod.benchmark(
+                run, fresh_inputs, device, max(1, warmup // 2),
+                max(5, min(int(rep), 20)), flush,
+                policy=task.policy, policy_exempt=args.policy_exempt)
+            audit["cache_checked"] = True
+            audit["fresh_median_ms"] = fresh_t["median_ms"]
+            audit["cache_suspected"] = pol.detect_cache(
+                sol_t["median_ms"], fresh_t["median_ms"])
+        except pol.PolicyViolation as exc:
+            result["status"] = "fail_policy"
+            result["error"] = "policy violation during cache audit: %s%s" % (
+                exc.code, (": " + exc.detail) if exc.detail else "")
+            return _finish(result, args.out, t_start)
+        except Exception as exc:
+            audit["cache_error"] = "%s: %s" % (type(exc).__name__, exc)
+        if dev.is_accelerator(device):
+            wall = []
+            try:
+                for _ in range(5):
+                    dev.sync(device)
+                    t0 = time.perf_counter()
+                    with pol.policy_guard(task.policy, args.policy_exempt):
+                        run(*inputs)
+                    dev.sync(device)
+                    wall.append((time.perf_counter() - t0) * 1000.0)
+                audit["side_stream_checked"] = True
+                audit["wall_median_ms"] = round(statistics.median(wall), 6)
+                audit["side_stream_suspected"] = pol.detect_side_stream(
+                    sol_t["median_ms"], statistics.median(wall))
+            except Exception as exc:
+                audit["side_stream_error"] = "%s: %s" % (type(exc).__name__, exc)
+    result["policy_audit"] = audit
+    if audit["cache_suspected"]:
+        result["status"] = "fail_policy"
+        result["error"] = ("benchmark cache suspected: fixed-input median %.4fms vs fresh-input "
+                           "median %.4fms" % (sol_t["median_ms"], audit.get("fresh_median_ms") or 0.0))
+        return _finish(result, args.out, t_start)
+    if audit["side_stream_suspected"]:
+        result["status"] = "fail_policy"
+        result["error"] = ("side stream suspected: event median %.4fms vs synchronized wall "
+                           "median %.4fms" % (sol_t["median_ms"], audit.get("wall_median_ms") or 0.0))
+        return _finish(result, args.out, t_start)
     result["status"] = "pass"
     return _finish(result, args.out, t_start)
 

@@ -7,6 +7,15 @@ single-pass online softmax that avoids materializing intermediate tensors.
 import torch
 
 TASK = {
+    "schema_version": 1,
+    "policy": {
+        "forbid_native_compute": False,
+        "require_kernel": False,
+        "torch_fused_exempt": True,
+        "forbid_reference": True,
+        "allow_nonfinite": False,
+        "reason": "legacy torch reference / replay fixture exemption",
+    },
     "name": "softmax",
     "level": 1,
     "description": "Row-wise softmax over the last dimension of a (2048, 4096) float32 tensor.",

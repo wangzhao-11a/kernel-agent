@@ -6,6 +6,15 @@ matter; on CPU the baseline already uses a tuned BLAS, so only fused epilogues o
 better parallelism can win. Good "can the agent avoid regressing" task.
 """
 TASK = {
+    "schema_version": 1,
+    "policy": {
+        "forbid_native_compute": False,
+        "require_kernel": False,
+        "torch_fused_exempt": True,
+        "forbid_reference": True,
+        "allow_nonfinite": False,
+        "reason": "legacy torch reference / replay fixture exemption",
+    },
     "name": "matmul",
     "level": 1,
     "description": "fp32 matrix multiply: out = x @ w, x=(1024,1024), w=(1024,1024).",

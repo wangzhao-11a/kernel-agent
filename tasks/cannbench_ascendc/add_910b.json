@@ -7,9 +7,21 @@
     "csrc/ops/add/op_kernel/add_launch.h",
     "csrc/ops/add/op_plugin/add_plugin.cpp"
   ],
-  "build_command": ["bash", "build.sh", "--soc=ascend910b", "--ops=add", "--install"],
-  "test_command": ["python3", "tests/test_add_official.py"],
-  "bench_command": ["python3", "tests/bench_add.py"],
+  "build_command": [
+    "bash",
+    "build.sh",
+    "--soc=ascend910b",
+    "--ops=add",
+    "--install"
+  ],
+  "test_command": [
+    "python3",
+    "tests/test_add_official.py"
+  ],
+  "bench_command": [
+    "python3",
+    "tests/bench_add.py"
+  ],
   "timeout_s": 900,
   "soc": "ascend910b",
   "hardware": "ascend-910b",
@@ -19,8 +31,23 @@
   "metadata": {
     "op": "add",
     "op_class": "elementwise",
-    "dtypes": ["float16", "float32", "int32"],
-    "tags": ["cannbench", "ascendc", "add", "910b"],
+    "dtypes": [
+      "float16",
+      "float32",
+      "int32"
+    ],
+    "tags": [
+      "cannbench",
+      "ascendc",
+      "add",
+      "910b"
+    ],
     "official_cases": 12
+  },
+  "policy": {
+    "forbid_native_compute": true,
+    "require_kernel": true,
+    "torch_fused_exempt": false,
+    "reason": "AscendC kernel package: compute must be in the kernel"
   }
 }

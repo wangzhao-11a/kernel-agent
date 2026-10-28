@@ -11,6 +11,15 @@ import torch
 T_TOK, K_TOP, HID, N_EXPERTS = 512, 8, 512, 64
 
 TASK = {
+    "schema_version": 1,
+    "policy": {
+        "forbid_native_compute": False,
+        "require_kernel": False,
+        "torch_fused_exempt": True,
+        "forbid_reference": True,
+        "allow_nonfinite": False,
+        "reason": "legacy torch reference / replay fixture exemption",
+    },
     "name": "moe_finalize_routing",
     "level": 2,
     "description": (

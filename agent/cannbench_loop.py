@@ -527,6 +527,7 @@ def main(argv=None) -> int:
         status = result.get("status")
         last_result = {"status": status, "speedup": speedup, "error": result.get("error")}
         row = {
+            "schema_version": 1,
             "iter": it, "task": spec.id, "spec": spec.path,
             "status": status, "speedup": speedup,
             "error": result.get("error"),

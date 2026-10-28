@@ -1,8 +1,18 @@
 {
   "comment": "Demo replay: first a wrong solution (x - y), then the fix (x + y), then finish.",
+  "policy_exempt": true,
   "responses": [
-    {"action": "write_solution", "content": "def run(x, y):\n    return x - y\n"},
-    {"action": "write_solution", "content": "def run(x, y):\n    return x + y\n"},
-    {"action": "finish", "summary": "demo replay: fixed the wrong op to x + y; passed."}
+    {
+      "action": "write_solution",
+      "content": "def run(x, y):\n    return x - y\n"
+    },
+    {
+      "action": "write_solution",
+      "content": "def run(x, y):\n    return x + y\n"
+    },
+    {
+      "action": "finish",
+      "summary": "demo replay: fixed the wrong op to x + y; passed."
+    }
   ]
 }

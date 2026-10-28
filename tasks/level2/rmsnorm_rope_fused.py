@@ -13,6 +13,15 @@ S_TOK, HEADS, D = 1024, 16, 64
 EPS = 1e-5
 
 TASK = {
+    "schema_version": 1,
+    "policy": {
+        "forbid_native_compute": False,
+        "require_kernel": False,
+        "torch_fused_exempt": True,
+        "forbid_reference": True,
+        "allow_nonfinite": False,
+        "reason": "legacy torch reference / replay fixture exemption",
+    },
     "name": "rmsnorm_rope_fused",
     "level": 2,
     "description": (

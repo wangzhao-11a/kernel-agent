@@ -1,7 +1,19 @@
 {
   "comment": "Demo replay for moe_finalize_routing: one fused pass instead of the per-k python loop; declares the practices it used plus an expected speedup, so the strategy pool learns from the measurement.",
+  "policy_exempt": true,
   "responses": [
-    {"action": "write_solution", "content": "import torch\n\n\ndef run(expert_out, routing_weights, expert_ids, expert_bias):\n    # one fused pass: gather bias, FMA weights, reduce over k (no per-k python loop)\n    bias = expert_bias[expert_ids]\n    return (expert_out * routing_weights.unsqueeze(-1) + bias).sum(dim=1)\n", "strategies": ["reduce launch overhead", "fused epilogue"], "expected_speedup": 1.5},
-    {"action": "finish", "summary": "demo: single fused pass for MoE finalize routing; declared launch-overhead + epilogue fusion for the pool."}
+    {
+      "action": "write_solution",
+      "content": "import torch\n\n\ndef run(expert_out, routing_weights, expert_ids, expert_bias):\n    # one fused pass: gather bias, FMA weights, reduce over k (no per-k python loop)\n    bias = expert_bias[expert_ids]\n    return (expert_out * routing_weights.unsqueeze(-1) + bias).sum(dim=1)\n",
+      "strategies": [
+        "reduce launch overhead",
+        "fused epilogue"
+      ],
+      "expected_speedup": 1.5
+    },
+    {
+      "action": "finish",
+      "summary": "demo: single fused pass for MoE finalize routing; declared launch-overhead + epilogue fusion for the pool."
+    }
   ]
 }

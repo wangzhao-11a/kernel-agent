@@ -7,10 +7,25 @@
     "csrc/ops/swiglu/op_kernel/swiglu_launch.h",
     "csrc/ops/swiglu/op_plugin/swiglu_plugin.cpp"
   ],
-  "build_command": ["bash", "build.sh", "--soc=ascend910b", "--ops=swiglu", "--install"],
-  "test_command": ["python3", "tests/test_swiglu_official.py"],
-  "bench_command": ["python3", "tests/bench_swiglu.py"],
-  "profile_command": ["python3", "tests/profile_swiglu.py"],
+  "build_command": [
+    "bash",
+    "build.sh",
+    "--soc=ascend910b",
+    "--ops=swiglu",
+    "--install"
+  ],
+  "test_command": [
+    "python3",
+    "tests/test_swiglu_official.py"
+  ],
+  "bench_command": [
+    "python3",
+    "tests/bench_swiglu.py"
+  ],
+  "profile_command": [
+    "python3",
+    "tests/profile_swiglu.py"
+  ],
   "timeout_s": 900,
   "soc": "ascend910b",
   "hardware": "ascend-910b",
@@ -20,18 +35,39 @@
   "metadata": {
     "op": "swi_glu",
     "op_class": "elementwise",
-    "dtypes": ["float16", "float32", "bfloat16"],
-    "tags": ["cannbench", "ascendc", "swiglu", "910b"],
+    "dtypes": [
+      "float16",
+      "float32",
+      "bfloat16"
+    ],
+    "tags": [
+      "cannbench",
+      "ascendc",
+      "swiglu",
+      "910b"
+    ],
     "official_cases": 12,
     "edge_cases": 14,
-    "edge_test_command": ["python3", "tests/test_swiglu_tiny_edges.py"],
+    "edge_test_command": [
+      "python3",
+      "tests/test_swiglu_tiny_edges.py"
+    ],
     "unaligned_edge_cases": 12,
-    "unaligned_edge_test_command": ["python3", "tests/test_swiglu_unaligned_edges.py"],
+    "unaligned_edge_test_command": [
+      "python3",
+      "tests/test_swiglu_unaligned_edges.py"
+    ],
     "bench_cases": 22,
     "bench_metric": "geomean",
     "bench_runs": 3,
     "reference_speedup": 2.466,
     "reference_total_speedup": 2.846,
     "reference_worst_speedup": 2.072
+  },
+  "policy": {
+    "forbid_native_compute": true,
+    "require_kernel": true,
+    "torch_fused_exempt": false,
+    "reason": "AscendC kernel package: compute must be in the kernel"
   }
 }

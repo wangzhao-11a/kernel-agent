@@ -123,6 +123,45 @@ A solution is any file defining `run(...)`. The harness:
 - records provenance (`cpu` / `cuda` / `npu`) so mechanics runs cannot be
   mistaken for hardware results.
 
+### Evaluation policy (strict tasks)
+
+Legacy PyTorch tasks carry an explicit exemption:
+
+```python
+"schema_version": 1,
+"policy": {
+    "forbid_native_compute": False,
+    "require_kernel": False,
+    "torch_fused_exempt": True,
+    "reason": "legacy torch reference / replay fixture exemption",
+},
+```
+
+A kernel-only task opts in with `forbid_native_compute: true` and
+`require_kernel: true`.  While the candidate runs, a `TorchDispatchMode`
+allow-list permits allocation/view/copy/metadata ATen ops and rejects native
+compute.  AST checks are auxiliary (reference imports, dynamic task loading,
+native compute calls, kernel evidence).  A candidate that calls the reference,
+uses native compute, caches across trials, launches on a side stream, overfits a
+fixed shape, or mishandles NaN/Inf is rejected by `harness/policy.py`; see
+`scripts/policy_selftest.py`.
+
+Tasks can declare a weighted, held-out-aware shape set:
+
+```python
+"shape_set": [
+    {"name": "train", "shape": [2, 2048], "dtype": "float16", "weight": 0.7,
+     "heldout": false, "input_specs": [{"kind": "randn"}]},
+    {"name": "heldout_odd", "shape": [17, 257], "dtype": "float16", "weight": 0.0,
+     "heldout": true, "input_specs": [{"kind": "randn"}]},
+]
+```
+
+Phase 1 fixes the schema, held-out split, per-case seeds and NaN/Inf/empty/
+extreme input kinds; weighted aggregation and the worst-shape gate are Phase 4.
+`scripts/migrate_jsonl_schema.py` adds `schema_version` to old result/attempt
+JSONL files with a `.bak` copy.
+
 ---
 
 ## AscendC operator loop (CannBench)

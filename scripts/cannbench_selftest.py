@@ -83,6 +83,8 @@ def make_package(tmp):
         fh.write("GOOD\n")
     with open(os.path.join(pkg, "extra.txt"), "w", encoding="utf-8") as fh:
         fh.write("EXTRA_BASE\n")
+    with open(os.path.join(pkg, "probe.cpp"), "w", encoding="utf-8") as fh:
+        fh.write("// policy probe\n")
     with open(os.path.join(pkg, "large.txt"), "w", encoding="utf-8") as fh:
         for i in range(400):
             fh.write("line %03d\n" % i)
@@ -94,7 +96,7 @@ def make_package(tmp):
         "id": "mock_swiglu",
         "description": "mock package for the CannBench backend",
         "package": "pkg",
-        "edit_files": ["kernel.txt", "extra.txt", "large.txt"],
+        "edit_files": ["kernel.txt", "extra.txt", "large.txt", "probe.cpp"],
         "build_command": [sys.executable, "mock_build.py"],
         "test_command": [sys.executable, "mock_test.py"],
         "bench_command": [sys.executable, "mock_bench.py"],
@@ -143,6 +145,13 @@ def main():
             assert (result["timing"] or {}).get("speedup") == 1.25, result["timing"]
             assert "pass" in format_summary(result)
         check("build+test+bench pass with 3/3 cases", good_case)
+
+        def native_policy_case():
+            result = run_cannbench(spec, files={"probe.cpp": "torch::matmul(a, b);\n"},
+                                   work_root=os.path.join(tmp, "run_policy"))
+            assert result["status"] == "fail_policy", result.get("status")
+            assert "native_compute" in (result.get("error") or ""), result.get("error")
+        check("policy: edited C++ cannot call native torch compute", native_policy_case)
 
         def profile_case():
             result = run_profile(spec, files={"kernel.txt": "GOOD_PROFILE\n"},

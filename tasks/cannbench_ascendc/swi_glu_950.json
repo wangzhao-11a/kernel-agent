@@ -7,10 +7,22 @@
     "csrc/ops/swiglu/op_kernel/swiglu_launch.h",
     "csrc/ops/swiglu/op_plugin/swiglu_plugin.cpp"
   ],
-  "build_command": ["bash", "build.sh", "--soc=ascend950", "--ops=swiglu", "--install"],
-  "test_command": ["python3", "tests/test_swiglu_official.py"],
+  "build_command": [
+    "bash",
+    "build.sh",
+    "--soc=ascend950",
+    "--ops=swiglu",
+    "--install"
+  ],
+  "test_command": [
+    "python3",
+    "tests/test_swiglu_official.py"
+  ],
   "bench_command": null,
-  "profile_command": ["python3", "tests/profile_swiglu.py"],
+  "profile_command": [
+    "python3",
+    "tests/profile_swiglu.py"
+  ],
   "timeout_s": 900,
   "soc": "ascend950",
   "hardware": "ascend-950pr",
@@ -20,8 +32,23 @@
   "metadata": {
     "op": "swi_glu",
     "op_class": "elementwise",
-    "dtypes": ["float16", "float32", "bfloat16"],
-    "tags": ["cannbench", "ascendc", "swiglu", "950pr"],
+    "dtypes": [
+      "float16",
+      "float32",
+      "bfloat16"
+    ],
+    "tags": [
+      "cannbench",
+      "ascendc",
+      "swiglu",
+      "950pr"
+    ],
     "official_cases": 20
+  },
+  "policy": {
+    "forbid_native_compute": true,
+    "require_kernel": true,
+    "torch_fused_exempt": false,
+    "reason": "AscendC kernel package: compute must be in the kernel"
   }
 }

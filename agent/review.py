@@ -10,6 +10,8 @@ import difflib
 import json
 import re
 
+from harness.policy import cpp_policy_findings
+
 
 def _add(findings, severity, code, message):
     findings.append({"severity": severity, "code": code, "message": message})
@@ -60,6 +62,12 @@ def review_edit(files: dict, plan: dict | None, spec=None) -> dict:
     if "arch35" in code_text.lower():
         _add(findings, "warn", "arch35",
              "Changed code references arch35 (950-specific) paths; do not use them for 910B.")
+
+    spec_policy = getattr(spec, "policy", {}) or {}
+    if spec_policy.get("forbid_native_compute"):
+        for finding in cpp_policy_findings(files):
+            _add(findings, finding.get("severity", "error"), finding.get("code", "policy"),
+                 finding.get("message", "policy violation"))
 
     errors = [f for f in findings if f["severity"] == "error"]
     warnings = [f for f in findings if f["severity"] == "warn"]

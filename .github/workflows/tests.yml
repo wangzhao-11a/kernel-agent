@@ -26,3 +26,5 @@ jobs:
         run: python scripts/skills_selftest.py
       - name: CannBench contract self-test
         run: python scripts/cannbench_selftest.py
+      - name: Evaluation policy self-test
+        run: python scripts/policy_selftest.py

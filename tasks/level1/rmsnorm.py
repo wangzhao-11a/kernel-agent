@@ -9,6 +9,15 @@ import torch
 EPS = 1e-5
 
 TASK = {
+    "schema_version": 1,
+    "policy": {
+        "forbid_native_compute": False,
+        "require_kernel": False,
+        "torch_fused_exempt": True,
+        "forbid_reference": True,
+        "allow_nonfinite": False,
+        "reason": "legacy torch reference / replay fixture exemption",
+    },
     "name": "rmsnorm",
     "level": 1,
     "description": "RMSNorm over the last dim: out = x * rsqrt(mean(x^2) + 1e-5) * w, x=(2048, 4096) fp32, w=(4096,) fp32.",

@@ -5,6 +5,15 @@ Optimization target: vectorized loads/stores, avoiding extra passes (already 1 p
 so realistic gains come from better memory access or a kernel-level implementation.
 """
 TASK = {
+    "schema_version": 1,
+    "policy": {
+        "forbid_native_compute": False,
+        "require_kernel": False,
+        "torch_fused_exempt": True,
+        "forbid_reference": True,
+        "allow_nonfinite": False,
+        "reason": "legacy torch reference / replay fixture exemption",
+    },
     "name": "vector_add",
     "level": 1,
     "description": "Elementwise add: out[i] = x[i] + y[i] for two contiguous float32 tensors of shape (1048576,).",

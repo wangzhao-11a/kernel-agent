@@ -167,6 +167,8 @@ def main(argv=None) -> int:
     ap.add_argument("--strict-provenance", action="store_true",
                     help="refuse to update performance evidence when device != claimed hardware "
                          "(e.g. CPU mechanics run labelled ascend-910b)")
+    ap.add_argument("--policy-exempt", action="store_true",
+                    help="legacy/reference/replay run: skip strict task policy checks")
     ap.add_argument("--max-repeat-errors", type=int, default=3,
                     help="stop after N consecutive attempts with the same error signature (0 disables)")
     ap.add_argument("--quiet", action="store_true")
@@ -239,12 +241,16 @@ def main(argv=None) -> int:
         return 2
 
     replayer = None
+    replay_exempt = False
     if provider == "replay":
         if not args.replay_file:
             print("ERROR: --provider replay needs --replay-file")
             return 2
         with open(args.replay_file, "r", encoding="utf-8") as fh:
-            replayer = llm_mod.ReplayModel(json.load(fh).get("responses", []))
+            replay_payload = json.load(fh)
+        replay_exempt = bool(replay_payload.get("policy_exempt", False))
+        replayer = llm_mod.ReplayModel(replay_payload.get("responses", []))
+    policy_exempt = bool(args.policy_exempt or replay_exempt)
 
     run_name = "%s_%s" % (datetime.now().strftime("%Y%m%d-%H%M%S"), task.name)
     run_dir = os.path.join(args.out_dir, run_name)
@@ -319,6 +325,7 @@ def main(argv=None) -> int:
             task=args.task, solution=path, device=args.device, timeout=args.timeout,
             warmup=args.warmup, rep=args.rep, trials=args.trials,
             require=args.require or None,
+            policy_exempt=policy_exempt,
             run_id=run_name, iteration=it, out_dir=run_dir,
             results_file=args.results_file, quiet=True,
         )
@@ -369,6 +376,7 @@ def main(argv=None) -> int:
 
         measured = speedup if status == "pass" else 0.0
         attempt = {
+            "schema_version": 1,
             "iter": it,
             "task": task.name,
             "task_file": os.path.abspath(args.task),

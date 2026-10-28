@@ -13,6 +13,15 @@ import torch.nn.functional as F
 B, H, S, D = 2, 8, 4096, 64
 
 TASK = {
+    "schema_version": 1,
+    "policy": {
+        "forbid_native_compute": False,
+        "require_kernel": False,
+        "torch_fused_exempt": True,
+        "forbid_reference": True,
+        "allow_nonfinite": False,
+        "reason": "legacy torch reference / replay fixture exemption",
+    },
     "name": "decode_attention",
     "level": 2,
     "description": (

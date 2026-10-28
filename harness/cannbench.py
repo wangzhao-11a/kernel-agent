@@ -27,6 +27,8 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 
+from .policy import cpp_policy_findings, normalize_policy
+
 DEFAULT_TIMEOUT = 900
 CASE_RE = re.compile(
     r"^\s*(?P<shape>\([^)]*\))\s+(?P<dtype>[A-Za-z0-9_]+)\s+dim=(?P<dim>-?\d+)\s+"
@@ -59,6 +61,7 @@ class CannBenchSpec:
     metric_key: str = "speedup"
     expected_speedup: float = 1.0
     metadata: dict = field(default_factory=dict)
+    policy: dict = field(default_factory=dict)
     path: str = ""
 
     def to_dict(self) -> dict:
@@ -70,7 +73,7 @@ class CannBenchSpec:
             "soc": self.soc, "hardware": self.hardware, "baseline": self.baseline,
             "description": self.description, "metric_key": self.metric_key,
             "expected_speedup": self.expected_speedup, "metadata": self.metadata,
-            "path": self.path,
+            "policy": self.policy, "path": self.path,
         }
 
 
@@ -119,6 +122,15 @@ def load_spec(path: str) -> CannBenchSpec:
     if timeout_s <= 0:
         raise CannBenchError("timeout_s must be > 0")
 
+    raw_policy = data.get("policy")
+    if raw_policy is None:
+        raw_policy = {
+            "forbid_native_compute": True, "require_kernel": True,
+            "torch_fused_exempt": False,
+            "reason": "CannBench AscendC package: compute must be in the kernel",
+        }
+    policy = normalize_policy({"policy": raw_policy})
+
     return CannBenchSpec(
         id=str(data["id"]),
         package=package,
@@ -135,6 +147,7 @@ def load_spec(path: str) -> CannBenchSpec:
         metric_key=str(data.get("metric_key") or "speedup"),
         expected_speedup=float(data.get("expected_speedup", 1.0) or 1.0),
         metadata=dict(data.get("metadata") or {}),
+        policy=policy,
         path=os.path.abspath(path),
     )
 
@@ -281,8 +294,6 @@ def run_cannbench(spec: CannBenchSpec, files: dict | None = None,
     logs = os.path.join(run_root, "logs")
     started = time.time()
     workspace = prepare_workspace(spec, run_root, files)
-    build = _run(spec.build_command, workspace, spec.timeout_s,
-                 os.path.join(logs, "build.log"))
     result = {
         "spec_id": spec.id,
         "run_id": run_id or os.path.basename(run_root),
@@ -291,7 +302,9 @@ def run_cannbench(spec: CannBenchSpec, files: dict | None = None,
         "package": spec.package,
         "workspace": workspace,
         "files": sorted((files or {}).keys()),
-        "build": build,
+        "policy": spec.policy,
+        "policy_findings": [],
+        "build": None,
         "test": None,
         "bench": None,
         "cases": [],
@@ -300,6 +313,17 @@ def run_cannbench(spec: CannBenchSpec, files: dict | None = None,
         "status": "",
         "error": "",
     }
+    if spec.policy.get("forbid_native_compute"):
+        findings = cpp_policy_findings(files or {})
+        result["policy_findings"] = findings
+        errors = [f for f in findings if f.get("severity") == "error"]
+        if errors:
+            result["status"] = "fail_policy"
+            result["error"] = "; ".join(f.get("message", "") for f in errors)
+            return result
+    build = _run(spec.build_command, workspace, spec.timeout_s,
+                 os.path.join(logs, "build.log"))
+    result["build"] = build
     if build["timed_out"]:
         result["status"] = "timeout"
         result["error"] = "build timed out after %.0fs" % spec.timeout_s

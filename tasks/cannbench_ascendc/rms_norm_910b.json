@@ -7,10 +7,25 @@
     "csrc/ops/row_ops/op_kernel/row_ops_launch.h",
     "csrc/ops/row_ops/op_plugin/row_ops_plugin.cpp"
   ],
-  "build_command": ["bash", "build.sh", "--soc=ascend910b", "--ops=row_ops,layout_ops", "--install"],
-  "test_command": ["python3", "tests/test_rms_norm_official.py"],
-  "bench_command": ["python3", "tests/bench_rms_norm.py"],
-  "profile_command": ["python3", "tests/profile_rms_norm.py"],
+  "build_command": [
+    "bash",
+    "build.sh",
+    "--soc=ascend910b",
+    "--ops=row_ops,layout_ops",
+    "--install"
+  ],
+  "test_command": [
+    "python3",
+    "tests/test_rms_norm_official.py"
+  ],
+  "bench_command": [
+    "python3",
+    "tests/bench_rms_norm.py"
+  ],
+  "profile_command": [
+    "python3",
+    "tests/profile_rms_norm.py"
+  ],
   "timeout_s": 900,
   "soc": "ascend910b",
   "hardware": "ascend-910b",
@@ -20,16 +35,35 @@
   "metadata": {
     "op": "rms_norm",
     "op_class": "reduction",
-    "dtypes": ["float16", "float32", "bfloat16"],
-    "tags": ["cannbench", "ascendc", "rms_norm", "row_ops", "910b"],
+    "dtypes": [
+      "float16",
+      "float32",
+      "bfloat16"
+    ],
+    "tags": [
+      "cannbench",
+      "ascendc",
+      "rms_norm",
+      "row_ops",
+      "910b"
+    ],
     "official_cases": 6,
     "edge_cases": 13,
-    "edge_test_command": ["python3", "tests/test_rms_norm_edges.py"],
+    "edge_test_command": [
+      "python3",
+      "tests/test_rms_norm_edges.py"
+    ],
     "bench_cases": 14,
     "bench_metric": "geomean",
     "bench_runs": 3,
     "reference_speedup": 4.366,
     "reference_total_speedup": 4.288,
     "reference_worst_speedup": 2.658
+  },
+  "policy": {
+    "forbid_native_compute": true,
+    "require_kernel": true,
+    "torch_fused_exempt": false,
+    "reason": "AscendC kernel package: compute must be in the kernel"
   }
 }
