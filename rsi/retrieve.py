@@ -30,6 +30,11 @@ def _quality(strategy: dict) -> float:
     rate = (succeeded / applied) if applied else 0.4
     ema = float(stats.get("ema_speedup") or 1.0)
     base = rate * (1.0 + 0.5 * (ema - 1.0))
+    # Persistent over-prediction is a reason to trust a strategy less, even if it
+    # occasionally wins.  Under-prediction is not penalized.
+    optimism = max(0.0, float(stats.get("calibration_bias") or 0.0))
+    if optimism:
+        base *= 1.0 / (1.0 + 0.5 * min(optimism, 3.0))
     explore = 0.25 / math.sqrt(1.0 + applied)
     confidence = {"seed": 0.15, "verified": 0.30, "candidate": 0.05}.get(strategy.get("confidence"), 0.1)
     return base + explore + confidence
@@ -121,6 +126,9 @@ def priors_block(feats: dict, hardware: str, matched: list, combos: list, attemp
             marks.append("measured EMA %.2fx" % ema)
         if calibration is not None:
             marks.append("expectation error %.2f" % calibration)
+        bias = stats.get("calibration_bias")
+        if bias is not None:
+            marks.append("calibration bias %+.2f" % float(bias))
         cond = strategy.get("conditions") or {}
         cond_bits = []
         if cond.get("hardware"):

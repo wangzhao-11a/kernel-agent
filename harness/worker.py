@@ -22,6 +22,7 @@ from . import benchmark as bench_mod
 from . import correctness as corr_mod
 from . import device as dev
 from . import policy as pol
+from . import stats as stats_mod
 from .tasks import TaskLoadError, load_task
 
 
@@ -231,6 +232,8 @@ def format_summary(result: dict) -> str:
                 100.0 * t.get("stability_delta", 0.0),
             )
         )
+        if t.get("speedup_ci95"):
+            lines.append("speedup CI95: [%.3f, %.3f]" % tuple(t["speedup_ci95"]))
     if result.get("policy_strict"):
         lines.append("policy: strict (native compute forbidden%s)" % (
             ", kernel required" if (result.get("policy") or {}).get("require_kernel") else ""))
@@ -474,6 +477,7 @@ def main(argv=None) -> int:
 
     speedup = base_t["median_ms"] / sol_t["median_ms"] if sol_t["median_ms"] > 0 else 0.0
     stability = abs(sol_t2["median_ms"] - sol_t["median_ms"]) / max(sol_t["median_ms"], 1e-9)
+    speedup_ci = stats_mod.bootstrap_ratio_ci(base_t.get("samples_ms"), sol_t.get("samples_ms"))
     result["timing"] = {
         "solution": sol_t,
         "solution_second_pass": sol_t2,
@@ -481,6 +485,7 @@ def main(argv=None) -> int:
         "baseline_kind": b_kind,
         "baseline_fallback": baseline_fallback,
         "speedup": round(speedup, 4),
+        "speedup_ci95": speedup_ci,
         "stability_delta": round(stability, 4),
         "unit": "ms",
     }

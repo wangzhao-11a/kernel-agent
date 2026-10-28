@@ -55,4 +55,7 @@ def benchmark(fn, inputs, device: str, warmup: int = 25, rep: int = 100, flush_l
         "p10_ms": float(ordered[max(0, int(0.10 * (n - 1)))]),
         "std_ms": float(statistics.pstdev(ordered)) if n > 1 else 0.0,
         "reps": n,
+        # Raw samples feed the bootstrap CI and ablation gate.  Keep them rounded
+        # to keep result JSON readable.
+        "samples_ms": [round(float(x), 6) for x in times],
     }

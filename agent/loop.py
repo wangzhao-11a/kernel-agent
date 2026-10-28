@@ -38,6 +38,7 @@ if ROOT not in sys.path:
 from agent import llm as llm_mod  # noqa: E402
 from agent.prompts import build_feedback, build_task_prompt, system_prompt  # noqa: E402
 from harness import device as dev  # noqa: E402
+from harness import stats as stats_mod  # noqa: E402
 from harness.runner import run_evaluation  # noqa: E402
 from harness.tasks import load_task  # noqa: E402
 from harness.worker import format_summary  # noqa: E402
@@ -375,6 +376,41 @@ def main(argv=None) -> int:
             profile_text, profile_meta = do_profile(path, it)
 
         measured = speedup if status == "pass" else 0.0
+        # Counterfactual control: before a candidate can replace the best and
+        # feed strategy confidence, re-measure the previous best (revert the
+        # candidate's change set) and require a CI-significant gain.
+        ablation = None
+        evidence_eligible = True
+        promote = False
+        better = bool(status == "pass" and (
+            best.get("status") != "pass" or speedup >= float(best.get("speedup") or 0.0)))
+        if (status == "pass" and best.get("status") == "pass" and best.get("path")
+                and best.get("path") != path and (declared or resolved)
+                and speedup >= float(best.get("speedup") or 0.0)):
+            control_res = run_evaluation(
+                task=args.task, solution=best["path"], device=args.device,
+                timeout=args.timeout, warmup=args.warmup, rep=args.rep, trials=args.trials,
+                require=args.require or None, policy_exempt=policy_exempt,
+                run_id=run_name, iteration=it,
+                out_dir=os.path.join(run_dir, "ablation-%02d" % it),
+                results_file=args.results_file, quiet=True,
+            )
+            ctiming = control_res.get("timing") or {}
+            cspeed = float(ctiming.get("speedup") or 0.0)
+            ci = stats_mod.bootstrap_ratio_ci(
+                (ctiming.get("solution") or {}).get("samples_ms"),
+                (result.get("timing") or {}).get("solution", {}).get("samples_ms"))
+            significant = stats_mod.ci_excludes_one(ci)
+            ablation = {
+                "control_speedup": round(cspeed, 4),
+                "control_status": control_res.get("status"),
+                "ci95": ci,
+                "significant": bool(significant),
+            }
+            evidence_eligible = bool(significant)
+            promote = bool(significant)
+            if not significant:
+                better = False
         attempt = {
             "schema_version": 1,
             "iter": it,
@@ -390,6 +426,9 @@ def main(argv=None) -> int:
             "uses_triton": bool((result.get("solution_features") or {}).get("uses_triton")),
             "kb_reads": list(dict.fromkeys(kb_reads)),
             "calibration_error": (round(abs(expected - measured), 4) if expected is not None else None),
+            "ablation": ablation,
+            "evidence_eligible": evidence_eligible,
+            "promote": promote,
             "profile": profile_meta,
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "distilled": False,
@@ -404,9 +443,7 @@ def main(argv=None) -> int:
                                                run_name, task.name)
 
         uses_kernel = bool((result.get("solution_features") or {}).get("uses_triton"))
-        if status == "pass" and speedup >= best["speedup"]:
-            best.update(status=status, speedup=speedup, path=path, uses_triton=uses_kernel)
-        elif best["status"] is None:
+        if better:
             best.update(status=status, speedup=speedup, path=path, uses_triton=uses_kernel)
 
         hints = failure_hints(matched, attempted_ids) if (use_rsi and status != "pass") else ""

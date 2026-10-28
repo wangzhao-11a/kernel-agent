@@ -211,20 +211,32 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
         resolved = [r for r in (resolve_declared(d, store) for d in declared_for_resolution) if r]
         used = sorted(set(resolved)) or attribute_from_source(attempt.get("solution_source") or "", store, feats)
         outcome = "failure" if status != "pass" else ("success" if speedup >= 1.0 else "neutral")
+        ablation = attempt.get("ablation") or {}
+        eligibility = bool(attempt.get("evidence_eligible", True))
+        promote = bool(attempt.get("promote", ablation.get("significant", False)))
+        if not eligibility:
+            report["skipped"].append({
+                "iter": attempt.get("iter"),
+                "reason": "ablation not significant; candidate is not eligible for evidence/confidence",
+                "ablation": ablation,
+            })
+            attempt["distilled"] = True
+            continue
 
-        if status == "pass" and (best is None or speedup > best[2]):
+        if status == "pass" and eligibility and (best is None or speedup > best[2]):
             best = (attempt, used, speedup)
 
         for sid in used:
             store.record_evidence(sid, traj_ref, traj.get("task") or "", speedup if status == "pass" else 0.0,
-                                  outcome, expected_speedup=expected, hardware=hardware, dtype=dtype)
+                                  outcome, expected_speedup=expected, hardware=hardware, dtype=dtype,
+                                  promote=promote)
             touched.add(sid)
             report["evidence"].append({"strategy": sid, "iter": attempt.get("iter"),
                                        "outcome": outcome, "measured_speedup": speedup,
                                        "expected_speedup": expected})
 
         # Promote agent-declared practices we cannot resolve yet (only with a real gain).
-        if status == "pass" and speedup > 1.05:
+        if status == "pass" and speedup > 1.05 and promote:
             for name in declared_for_resolution:
                 if resolve_declared(name, store) is None:
                     st = store.upsert(
@@ -233,7 +245,8 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
                         keywords=[name], expected=speedup, source="agent-declared", confidence="candidate",
                     )
                     store.record_evidence(st["id"], traj_ref, traj.get("task") or "", speedup, outcome,
-                                          expected_speedup=expected, hardware=hardware, dtype=dtype)
+                                          expected_speedup=expected, hardware=hardware, dtype=dtype,
+                                          promote=promote)
                     touched.add(st["id"])
                     report["created"].append({"strategy": st["id"], "statement": st["statement"]})
 
