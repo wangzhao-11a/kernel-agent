@@ -205,7 +205,8 @@ python -m agent.cannbench_loop \
 
 `rsi/search.py` implements search policies over a synthetic operator terrain
 (`rsi/terrain.py`): the original single chain, best-first beam, UCB and Thompson
-bandits over tile/split/mode moves, and staged cheap screening.  `scripts/meta_eval.py`
+bandits over tile/split/mode moves, staged cheap screening, and a MAP-Elites
+archive over (tile bucket, split bucket, mode) descriptors.  `scripts/meta_eval.py`
 runs them under a fixed evaluation and token budget and compares multi-seed
 success/best distributions.
 
@@ -220,6 +221,7 @@ comparison (`data/meta_eval/phase3-search-compare.json`) is:
 | UCB | 1.00 | 1.00 | 1.00 | 3.080 | 2.558 | 3.442 | 4800 |
 | Thompson | 1.00 | 1.00 | 1.00 | 3.283 | 2.479 | 3.662 | 4800 |
 | staged | 1.00 | 1.00 | 1.00 | 2.811 | 2.476 | 3.225 | 2010 |
+| MAP-Elites | 1.00 | 1.00 | 1.00 | 2.947 | 2.499 | 3.546 | 4800 |
 
 Bandit allocation and staged screening beat the single chain on this terrain;
 the current best-first beam does not.  These are CPU synthetic mechanism results,

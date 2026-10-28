@@ -47,6 +47,10 @@ def main():
           lambda: (_ for _ in ()).throw(AssertionError(
               rows["thompson"]["best_reward"], rows["single-chain"]["best_reward"]))
           if rows["thompson"]["best_reward"] < rows["single-chain"]["best_reward"] else None)
+    check("search: MAP-Elites beats the single chain on seed 1",
+          lambda: (_ for _ in ()).throw(AssertionError(
+              rows["map-elites"]["best_reward"], rows["single-chain"]["best_reward"]))
+          if rows["map-elites"]["best_reward"] < rows["single-chain"]["best_reward"] else None)
     check("search: staged screening uses fewer tokens for a better result",
           lambda: (_ for _ in ()).throw(AssertionError(
               rows["staged"]["tokens"], rows["single-chain"]["tokens"]))

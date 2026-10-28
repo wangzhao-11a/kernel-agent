@@ -200,6 +200,50 @@ def bandit_search(terrain, max_evals: int, token_budget: int, algorithm: str = "
                    best_reward >= terrain.threshold)
 
 
+def map_elites_search(terrain, max_evals: int, token_budget: int, bins=None):
+    """MAP-Elites archive over (tile bucket, split bucket, mode) descriptors.
+
+    Each cell keeps its best candidate, so search pressure stays on diverse
+    behaviours instead of collapsing onto one local optimum.
+    """
+    from .terrain import TILES
+
+    rng = random.Random(terrain.seed ^ 0x3A9E)
+    budget = Budget(max_evals, token_budget)
+    bins = bins or len(TILES)
+    archive = {}
+    replacements = 0
+
+    def descriptor(candidate):
+        tile, split, mode = candidate
+        return (min(bins - 1, int(TILES.index(tile) * bins / len(TILES))),
+                min(3, (split - 1) // 2), mode)
+
+    def place(candidate, reward):
+        nonlocal replacements
+        key = descriptor(candidate)
+        if key not in archive or reward > archive[key][0]:
+            if key in archive:
+                replacements += 1
+            archive[key] = (reward, candidate)
+
+    root = (128, 1, 0)
+    place(root, budget.evaluate(terrain, root))
+    current = root
+    while budget.can_eval():
+        if archive and rng.random() < 0.35:
+            _reward, current = archive[rng.choice(sorted(archive))]
+        else:
+            current = terrain.random_candidate(rng)
+        for candidate in list(terrain.neighbours(current))[:3]:
+            if not budget.can_eval():
+                break
+            place(candidate, budget.evaluate(terrain, candidate))
+    best_reward, best = max(archive.values(), key=lambda item: item[0])
+    return _finish(terrain, budget, best, best_reward,
+                   best_reward >= terrain.threshold, replacements)
+
+
 def staged_search(terrain, max_evals: int, token_budget: int, keep: int = 2):
     rng = random.Random(terrain.seed ^ 0x57A6E)
     budget = Budget(max_evals, token_budget)
@@ -234,4 +278,5 @@ POLICIES = {
     "ucb": lambda t, e, b: bandit_search(t, e, b, "ucb"),
     "thompson": lambda t, e, b: bandit_search(t, e, b, "thompson"),
     "staged": staged_search,
+    "map-elites": map_elites_search,
 }

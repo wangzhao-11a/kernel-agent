@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "tag": "phase3-search-compare",
-  "git_commit": "f49b30a015d9af7377e8009372facd3077b9dc20",
+  "git_commit": "2093e1664d9b2ebfb76043a7ebb9cd4594dbb26b",
   "git_tag": "",
   "device": "cpu",
   "mode": "synthetic-terrain",
@@ -9553,7 +9553,1915 @@
         "best_mean_delta": 0.4837,
         "tokens_delta": -2790.0
       }
+    },
+    "map-elites": {
+      "summary": {
+        "pass@1": 1.0,
+        "pass@2": 1.0,
+        "pass@3": 1.0,
+        "best_mean": 2.9474,
+        "best_stdev": 0.4546,
+        "best_min": 2.4989,
+        "best_max": 3.5461,
+        "evals_mean": 40.0,
+        "full_evals_mean": 40.0,
+        "cheap_evals_mean": 0.0,
+        "tokens_mean": 4800.0,
+        "restarts_mean": 5.6
+      },
+      "runs": [
+        {
+          "seed": 1,
+          "best_candidate": [
+            1024,
+            8,
+            2
+          ],
+          "best_reward": 3.5461,
+          "evals": 40,
+          "full_evals": 40,
+          "cheap_evals": 0,
+          "tokens": 4800,
+          "threshold_hit": true,
+          "restarts": 8,
+          "history": [
+            {
+              "candidate": [
+                128,
+                1,
+                0
+              ],
+              "reward": 0.9102,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                1,
+                0
+              ],
+              "reward": 0.9161,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                1,
+                0
+              ],
+              "reward": 0.9396,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                2,
+                0
+              ],
+              "reward": 0.966,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                2,
+                0
+              ],
+              "reward": 0.9509,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                2,
+                0
+              ],
+              "reward": 1.0908,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                1,
+                0
+              ],
+              "reward": 0.8208,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                2,
+                0
+              ],
+              "reward": 0.9357,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                2,
+                0
+              ],
+              "reward": 1.564,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                1,
+                0
+              ],
+              "reward": 0.9424,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                8,
+                0
+              ],
+              "reward": 2.3172,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                7,
+                0
+              ],
+              "reward": 1.6007,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                8,
+                1
+              ],
+              "reward": 1.7405,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                2,
+                2
+              ],
+              "reward": 1.1376,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                2,
+                2
+              ],
+              "reward": 1.9848,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                1,
+                2
+              ],
+              "reward": 1.1402,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                2,
+                2
+              ],
+              "reward": 1.1565,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                2,
+                2
+              ],
+              "reward": 1.4336,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                1,
+                2
+              ],
+              "reward": 0.9901,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                1,
+                1
+              ],
+              "reward": 1.263,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                1,
+                1
+              ],
+              "reward": 1.2739,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                2,
+                1
+              ],
+              "reward": 1.591,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                7,
+                2
+              ],
+              "reward": 2.2699,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                6,
+                2
+              ],
+              "reward": 1.7225,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                8,
+                2
+              ],
+              "reward": 1.8607,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                8,
+                2
+              ],
+              "reward": 1.9275,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                8,
+                2
+              ],
+              "reward": 3.5461,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                7,
+                2
+              ],
+              "reward": 2.0831,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                2,
+                2
+              ],
+              "reward": 1.0845,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                2,
+                2
+              ],
+              "reward": 1.3204,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                1,
+                2
+              ],
+              "reward": 0.9846,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                8,
+                2
+              ],
+              "reward": 2.2725,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                7,
+                2
+              ],
+              "reward": 1.8433,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                8,
+                0
+              ],
+              "reward": 1.7675,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                1,
+                1
+              ],
+              "reward": 1.353,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                1,
+                1
+              ],
+              "reward": 0.935,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                2,
+                1
+              ],
+              "reward": 1.4456,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                2,
+                1
+              ],
+              "reward": 1.4998,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                2,
+                1
+              ],
+              "reward": 1.058,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                1,
+                1
+              ],
+              "reward": 1.1798,
+              "cheap": false
+            }
+          ]
+        },
+        {
+          "seed": 2,
+          "best_candidate": [
+            1024,
+            7,
+            1
+          ],
+          "best_reward": 2.4989,
+          "evals": 40,
+          "full_evals": 40,
+          "cheap_evals": 0,
+          "tokens": 4800,
+          "threshold_hit": true,
+          "restarts": 6,
+          "history": [
+            {
+              "candidate": [
+                128,
+                1,
+                0
+              ],
+              "reward": 0.9508,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                1,
+                0
+              ],
+              "reward": 0.8343,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                1,
+                0
+              ],
+              "reward": 0.9534,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                2,
+                0
+              ],
+              "reward": 1.007,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                8,
+                0
+              ],
+              "reward": 1.8979,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                8,
+                0
+              ],
+              "reward": 1.5787,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                7,
+                0
+              ],
+              "reward": 2.1988,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                4,
+                1
+              ],
+              "reward": 1.3392,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                4,
+                1
+              ],
+              "reward": 1.9208,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                3,
+                1
+              ],
+              "reward": 1.6212,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                3,
+                2
+              ],
+              "reward": 1.2706,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                3,
+                2
+              ],
+              "reward": 2.3958,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                2,
+                2
+              ],
+              "reward": 1.2416,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                3,
+                1
+              ],
+              "reward": 1.243,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                3,
+                1
+              ],
+              "reward": 1.2041,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                2,
+                1
+              ],
+              "reward": 0.916,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                3,
+                2
+              ],
+              "reward": 1.5547,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                3,
+                2
+              ],
+              "reward": 1.5264,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                2,
+                2
+              ],
+              "reward": 2.0578,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                4,
+                2
+              ],
+              "reward": 1.4768,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                4,
+                2
+              ],
+              "reward": 1.674,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                3,
+                2
+              ],
+              "reward": 1.3037,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                3,
+                2
+              ],
+              "reward": 1.2496,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                3,
+                2
+              ],
+              "reward": 1.4884,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                2,
+                2
+              ],
+              "reward": 1.062,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                6,
+                1
+              ],
+              "reward": 2.2942,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                5,
+                1
+              ],
+              "reward": 1.4429,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                7,
+                1
+              ],
+              "reward": 1.7079,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                3,
+                1
+              ],
+              "reward": 1.2209,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                2,
+                1
+              ],
+              "reward": 1.0805,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                4,
+                1
+              ],
+              "reward": 1.3544,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                2,
+                1
+              ],
+              "reward": 1.0933,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                2,
+                1
+              ],
+              "reward": 0.9058,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                1,
+                1
+              ],
+              "reward": 0.9105,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                2,
+                1
+              ],
+              "reward": 1.0561,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                1,
+                1
+              ],
+              "reward": 0.8969,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                3,
+                1
+              ],
+              "reward": 1.2967,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                7,
+                1
+              ],
+              "reward": 1.6463,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                7,
+                1
+              ],
+              "reward": 2.4989,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                6,
+                1
+              ],
+              "reward": 2.0478,
+              "cheap": false
+            }
+          ]
+        },
+        {
+          "seed": 3,
+          "best_candidate": [
+            1024,
+            8,
+            2
+          ],
+          "best_reward": 3.4491,
+          "evals": 40,
+          "full_evals": 40,
+          "cheap_evals": 0,
+          "tokens": 4800,
+          "threshold_hit": true,
+          "restarts": 4,
+          "history": [
+            {
+              "candidate": [
+                128,
+                1,
+                0
+              ],
+              "reward": 0.864,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                4,
+                0
+              ],
+              "reward": 1.3525,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                3,
+                0
+              ],
+              "reward": 1.0922,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                5,
+                0
+              ],
+              "reward": 1.4834,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                1,
+                0
+              ],
+              "reward": 0.85,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                1,
+                0
+              ],
+              "reward": 0.9258,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                2,
+                0
+              ],
+              "reward": 1.0859,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                7,
+                0
+              ],
+              "reward": 1.612,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                6,
+                0
+              ],
+              "reward": 1.532,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                8,
+                0
+              ],
+              "reward": 1.668,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                6,
+                2
+              ],
+              "reward": 2.0877,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                6,
+                2
+              ],
+              "reward": 2.0892,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                5,
+                2
+              ],
+              "reward": 3.1032,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                7,
+                0
+              ],
+              "reward": 1.5299,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                7,
+                0
+              ],
+              "reward": 1.7141,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                6,
+                0
+              ],
+              "reward": 1.5053,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                3,
+                2
+              ],
+              "reward": 1.2226,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                3,
+                2
+              ],
+              "reward": 2.2624,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                2,
+                2
+              ],
+              "reward": 1.1997,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                3,
+                2
+              ],
+              "reward": 1.2856,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                3,
+                2
+              ],
+              "reward": 1.4642,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                2,
+                2
+              ],
+              "reward": 1.1244,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                8,
+                2
+              ],
+              "reward": 3.4491,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                8,
+                2
+              ],
+              "reward": 1.7319,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                7,
+                2
+              ],
+              "reward": 2.1729,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                2,
+                2
+              ],
+              "reward": 1.1522,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                2,
+                2
+              ],
+              "reward": 1.3382,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                1,
+                2
+              ],
+              "reward": 0.9438,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                4,
+                0
+              ],
+              "reward": 1.9484,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                4,
+                0
+              ],
+              "reward": 1.6299,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                3,
+                0
+              ],
+              "reward": 1.2619,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                7,
+                0
+              ],
+              "reward": 1.4424,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                6,
+                0
+              ],
+              "reward": 1.437,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                8,
+                0
+              ],
+              "reward": 1.6951,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                8,
+                1
+              ],
+              "reward": 1.5756,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                8,
+                1
+              ],
+              "reward": 2.6382,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                7,
+                1
+              ],
+              "reward": 2.4001,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                6,
+                1
+              ],
+              "reward": 1.6194,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                6,
+                1
+              ],
+              "reward": 2.316,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                5,
+                1
+              ],
+              "reward": 1.5742,
+              "cheap": false
+            }
+          ]
+        },
+        {
+          "seed": 4,
+          "best_candidate": [
+            1024,
+            4,
+            2
+          ],
+          "best_reward": 2.6894,
+          "evals": 40,
+          "full_evals": 40,
+          "cheap_evals": 0,
+          "tokens": 4800,
+          "threshold_hit": true,
+          "restarts": 2,
+          "history": [
+            {
+              "candidate": [
+                128,
+                1,
+                0
+              ],
+              "reward": 0.8619,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                7,
+                1
+              ],
+              "reward": 2.4147,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                7,
+                1
+              ],
+              "reward": 2.199,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                6,
+                1
+              ],
+              "reward": 2.459,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                8,
+                0
+              ],
+              "reward": 2.3559,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                7,
+                0
+              ],
+              "reward": 1.7003,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                8,
+                1
+              ],
+              "reward": 1.8624,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                4,
+                0
+              ],
+              "reward": 1.392,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                4,
+                0
+              ],
+              "reward": 1.3395,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                3,
+                0
+              ],
+              "reward": 1.5458,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                3,
+                0
+              ],
+              "reward": 1.198,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                3,
+                0
+              ],
+              "reward": 1.2805,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                2,
+                0
+              ],
+              "reward": 1.5655,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                6,
+                0
+              ],
+              "reward": 1.5645,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                6,
+                0
+              ],
+              "reward": 2.4337,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                5,
+                0
+              ],
+              "reward": 1.7022,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                6,
+                1
+              ],
+              "reward": 2.3572,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                6,
+                1
+              ],
+              "reward": 1.9997,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                5,
+                1
+              ],
+              "reward": 2.2598,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                6,
+                1
+              ],
+              "reward": 2.2055,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                6,
+                1
+              ],
+              "reward": 2.1043,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                5,
+                1
+              ],
+              "reward": 2.3708,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                8,
+                1
+              ],
+              "reward": 2.5212,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                8,
+                1
+              ],
+              "reward": 1.5873,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                7,
+                1
+              ],
+              "reward": 2.2769,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                4,
+                2
+              ],
+              "reward": 2.6894,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                4,
+                2
+              ],
+              "reward": 1.3832,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                3,
+                2
+              ],
+              "reward": 1.4894,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                7,
+                0
+              ],
+              "reward": 2.1776,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                6,
+                0
+              ],
+              "reward": 1.5999,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                8,
+                0
+              ],
+              "reward": 1.6527,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                2,
+                2
+              ],
+              "reward": 1.1437,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                2,
+                2
+              ],
+              "reward": 1.2352,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                1,
+                2
+              ],
+              "reward": 0.9451,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                3,
+                2
+              ],
+              "reward": 2.3389,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                3,
+                2
+              ],
+              "reward": 1.2861,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                2,
+                2
+              ],
+              "reward": 1.4302,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                4,
+                0
+              ],
+              "reward": 1.2398,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                3,
+                0
+              ],
+              "reward": 1.2136,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                5,
+                0
+              ],
+              "reward": 1.3364,
+              "cheap": false
+            }
+          ]
+        },
+        {
+          "seed": 5,
+          "best_candidate": [
+            1024,
+            8,
+            1
+          ],
+          "best_reward": 2.5533,
+          "evals": 40,
+          "full_evals": 40,
+          "cheap_evals": 0,
+          "tokens": 4800,
+          "threshold_hit": true,
+          "restarts": 8,
+          "history": [
+            {
+              "candidate": [
+                128,
+                1,
+                0
+              ],
+              "reward": 0.8147,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                8,
+                1
+              ],
+              "reward": 1.6388,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                8,
+                1
+              ],
+              "reward": 2.4593,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                7,
+                1
+              ],
+              "reward": 1.5537,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                7,
+                1
+              ],
+              "reward": 1.701,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                7,
+                1
+              ],
+              "reward": 2.1251,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                6,
+                1
+              ],
+              "reward": 1.7446,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                1,
+                0
+              ],
+              "reward": 1.2153,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                2,
+                0
+              ],
+              "reward": 1.107,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                1,
+                1
+              ],
+              "reward": 0.9056,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                7,
+                2
+              ],
+              "reward": 2.2198,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                6,
+                2
+              ],
+              "reward": 1.7288,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                8,
+                2
+              ],
+              "reward": 1.7814,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                1,
+                0
+              ],
+              "reward": 0.8656,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                1,
+                0
+              ],
+              "reward": 0.8838,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                2,
+                0
+              ],
+              "reward": 0.9844,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                8,
+                1
+              ],
+              "reward": 1.8037,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                8,
+                1
+              ],
+              "reward": 2.5533,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                512,
+                7,
+                1
+              ],
+              "reward": 2.3215,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                1024,
+                1,
+                0
+              ],
+              "reward": 1.07,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                1,
+                0
+              ],
+              "reward": 0.8996,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                2,
+                0
+              ],
+              "reward": 1.3634,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                8,
+                0
+              ],
+              "reward": 1.6266,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                8,
+                0
+              ],
+              "reward": 1.7178,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                7,
+                0
+              ],
+              "reward": 1.5729,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                2,
+                1
+              ],
+              "reward": 1.0531,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                2,
+                1
+              ],
+              "reward": 1.1816,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                1,
+                1
+              ],
+              "reward": 0.9211,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                6,
+                1
+              ],
+              "reward": 2.1713,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                5,
+                1
+              ],
+              "reward": 1.5764,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                7,
+                1
+              ],
+              "reward": 1.8804,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                7,
+                1
+              ],
+              "reward": 2.2229,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                6,
+                1
+              ],
+              "reward": 1.6075,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                8,
+                1
+              ],
+              "reward": 1.9339,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                2048,
+                3,
+                2
+              ],
+              "reward": 1.4517,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                2,
+                2
+              ],
+              "reward": 1.1221,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                4096,
+                4,
+                2
+              ],
+              "reward": 1.5042,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                64,
+                2,
+                0
+              ],
+              "reward": 1.1028,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                256,
+                2,
+                0
+              ],
+              "reward": 1.0427,
+              "cheap": false
+            },
+            {
+              "candidate": [
+                128,
+                1,
+                0
+              ],
+              "reward": 0.7663,
+              "cheap": false
+            }
+          ]
+        }
+      ],
+      "vs_single_chain": {
+        "pass@1_delta": 0.4,
+        "best_mean_delta": 0.6198,
+        "tokens_delta": 0.0
+      }
     }
   },
-  "timestamp": "2026-10-28T14:11:50Z"
+  "timestamp": "2026-10-28T14:23:01Z"
 }
