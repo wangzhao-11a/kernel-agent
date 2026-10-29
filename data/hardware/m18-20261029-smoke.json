@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "tag": "m18-20261029-smoke",
+  "scope": "evaluation-mechanism smoke test on one Ascend910B4-1; tiny shapes; not a performance claim",
+  "host": "m18",
+  "host_npu_count": 8,
+  "visible_npu": "4",
+  "device": "npu",
+  "device_name": "Ascend910B4-1",
+  "driver": "npu-smi 25.5.1",
+  "cann": "9.1.0",
+  "torch": "2.10.0+cpu",
+  "torch_npu": "2.10.0.post4",
+  "container": "deepinfer-real",
+  "container_image": "vllm-ascend:dspark-a2-028",
+  "note": "CPU-side mechanisms were already covered by CI; this record only shows the NPU path of the same checks.",
+  "runs": {
+    "vector_add": {
+      "status": "pass",
+      "solution_ms": 0.05234,
+      "baseline_ms": 0.05306,
+      "speedup": 1.0138,
+      "speedup_ci95": [0.8201, 1.2137],
+      "read": "tiny 1M-element add is launch/noise bound; CI includes 1.0"
+    },
+    "vector_roofline": {
+      "status": "pass",
+      "solution_ms": 0.04957,
+      "baseline_ms": 0.04955,
+      "speedup": 0.9996,
+      "speedup_ci95": [0.9378, 1.09],
+      "roofline": {"achieved_bw_gbps": 253.8413, "bottleneck": "unknown",
+                   "declared_bytes": 12582912},
+      "read": "peak bandwidth was not supplied, so only achieved bandwidth is reported"
+    },
+    "weighted_shapes_good": {
+      "status": "pass",
+      "weighted_speedup": 0.9511,
+      "worst_case": {"name": "small", "speedup": 0.8831},
+      "shape_gate": {"min_required": 0.5, "passed": true},
+      "roofline": {"achieved_bw_gbps": 5.3195, "bottleneck": "unknown"}
+    },
+    "weighted_shapes_regressing": {
+      "status": "fail_shape_gate",
+      "weighted_speedup": 0.4321,
+      "worst_case": {"name": "large", "speedup": 0.0001},
+      "error": "worst shape large regressed to 0.000x (gate 0.500x)"
+    },
+    "policy_require_kernel": {
+      "status": "fail_policy",
+      "error": "task requires a real kernel; no triton @jit/cpp_extension/CANN marker found"
+    },
+    "policy_native_compute": {
+      "status": "fail_policy",
+      "error": "policy violation: native_compute: aten::mul"
+    },
+    "heldout_mismatch": {
+      "status": "fail_holdout",
+      "error": "held-out case heldout: output 0: 2048/2048 elements exceed tolerance ... first_at=[0]",
+      "diff": {"shape": [2048], "bad_count": 2048, "bad_locations": [[0], [1], [2], [3], [4]]}
+    },
+    "agent_replay": {
+      "iterations": 2,
+      "best_status": "pass",
+      "best_speedup": 1.049,
+      "provenance_valid": true,
+      "note": "replay fixture, so token counts are zero by construction"
+    }
+  },
+  "timestamp": "2026-10-29"
+}

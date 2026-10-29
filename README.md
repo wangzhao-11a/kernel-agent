@@ -293,6 +293,25 @@ interval uses within-case resampling (`bootstrap_weighted_ratio`).
 `scripts/shape_gate_selftest.py` covers a passing candidate and a candidate that
 regresses on one shape.
 
+### NPU smoke run (m18)
+
+A smoke run on one `Ascend910B4-1` (m18, NPU 4; CANN 9.1.0, torch 2.10.0+cpu,
+torch_npu 2.10.0.post4, image `vllm-ascend:dspark-a2-028`) is recorded in
+`data/hardware/m18-20261029-smoke.json`.  It verifies the NPU path only:
+
+| check | result |
+|---|---|
+| vector_add pass + provenance | pass, 1.014x, CI95 [0.820, 1.214] |
+| 12 MB roofline | pass, achieved 254 GB/s (no peak supplied, bottleneck unknown) |
+| weighted shapes + gate | good candidate passes; slow-large candidate `fail_shape_gate` |
+| strict `require_kernel` | `fail_policy` (no kernel marker) |
+| strict native compute | `fail_policy` (`native_compute: aten::mul`) |
+| held-out shape | `fail_holdout` with `first_at=[0]` |
+| replay agent | pass, 2 iterations, provenance valid |
+
+These are tiny-shape mechanism checks, not operator performance claims; the
+vector_add CI spans 1.0, so it should not be cited as a speedup.
+
 ---
 
 ## The RSI layer
