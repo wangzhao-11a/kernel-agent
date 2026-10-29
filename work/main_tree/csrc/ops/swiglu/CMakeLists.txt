@@ -1,0 +1,12 @@
+set(SWIGLU_KERNEL_SRCS
+    ${CMAKE_CURRENT_SOURCE_DIR}/op_kernel/swiglu_kernel.cpp
+)
+set(SWIGLU_PLUGIN_SRCS
+    ${CMAKE_CURRENT_SOURCE_DIR}/op_plugin/swiglu_plugin.cpp
+)
+register_direct_launch_op(
+    "${SWIGLU_KERNEL_SRCS}"
+    op_kernel
+    "${SWIGLU_PLUGIN_SRCS}"
+    op_kernel
+)

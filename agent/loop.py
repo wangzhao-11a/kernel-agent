@@ -24,6 +24,7 @@ including fully offline (replay) runs for testing.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import re
@@ -35,9 +36,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from agent import context as context_mod  # noqa: E402
 from agent import llm as llm_mod  # noqa: E402
 from agent.prompts import build_feedback, build_task_prompt, system_prompt  # noqa: E402
 from harness import device as dev  # noqa: E402
+from harness import stats as stats_mod  # noqa: E402
 from harness.runner import run_evaluation  # noqa: E402
 from harness.tasks import load_task  # noqa: E402
 from harness.worker import format_summary  # noqa: E402
@@ -49,6 +52,7 @@ from rsi.exemplars import render_exemplars, retrieve_exemplars  # noqa: E402
 from rsi.features import hardware_from_device, task_features  # noqa: E402
 from rsi.forms import form_for, form_hint  # noqa: E402
 from rsi.memory import MemoryStore  # noqa: E402
+from rsi import params as params_mod  # noqa: E402
 from rsi.provenance import provenance  # noqa: E402
 from rsi.retrieve import combos_for, failure_hints, priors_block, retrieve  # noqa: E402
 from rsi.store import DEFAULT_ROOT as DEFAULT_KNOWLEDGE_ROOT  # noqa: E402
@@ -113,6 +117,39 @@ def _memory_pseudo(result: dict) -> dict:
     }
 
 
+def _failure_text(result: dict) -> str:
+    parts = [_error_signature(result)]
+    trials = (result.get("correctness") or {}).get("trials") or []
+    for trial in trials:
+        if not trial.get("ok") and trial.get("error"):
+            parts.append(str(trial["error"]).splitlines()[0][:240])
+    return " ".join(p for p in parts if p)[:1000]
+
+
+def _similar_failure_hints(hits: list) -> str:
+    if not hits:
+        return ""
+    lines = ["Similar past failures (text match, NOT scope-matched; check relevance):"]
+    for hit in hits[:3]:
+        rec = hit["record"]
+        lines.append("- %s (%s) %s" % (hit["id"], rec.get("status") or "open",
+                                       str(rec.get("signature") or "")[:200]))
+        if rec.get("workaround"):
+            lines.append("  workaround: %s" % str(rec["workaround"])[:300])
+    return "\n".join(lines)
+
+
+def _error_signature(result: dict) -> str:
+    """Stable signature for repeated-failure detection (strip PIDs/timestamps)."""
+    raw = str(result.get("error") or "").strip()
+    if not raw:
+        return ""
+    lines = [ln for ln in raw.splitlines() if ln.strip()][:2]
+    text = " | ".join(lines)
+    text = re.sub(r"\[PID:\d+\]|\[\d{4}-\d\d-\d\d[^\]]*\]", "", text)
+    return " ".join(text.split())[:300]
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="agent.loop", description="Kernel optimization agent loop with RSI.")
     ap.add_argument("--task", required=True)
@@ -127,6 +164,14 @@ def main(argv=None) -> int:
     ap.add_argument("--max-iters", type=int, default=None)
     ap.add_argument("--target-speedup", type=float, default=None)
     ap.add_argument("--keep-going", action="store_true", help="keep iterating after the target is reached")
+    ap.add_argument("--tune-max-variants", type=int, default=6,
+                    help="maximum rendered variants for one tune action")
+    ap.add_argument("--max-context-chars", type=int, default=60000,
+                    help="compress the trajectory when prompt+history exceeds this many chars (0 disables)")
+    ap.add_argument("--keep-recent", type=int, default=4,
+                    help="verbatim messages kept after context compression")
+    ap.add_argument("--resume", default="",
+                    help="resume from a previous run directory's checkpoint.json")
     ap.add_argument("--replay-file", default=None)
     ap.add_argument("--device", default="auto")
     ap.add_argument("--hardware", default="", help="hardware label for strategy matching (default: task meta / device)")
@@ -151,11 +196,17 @@ def main(argv=None) -> int:
     ap.add_argument("--no-rsi", action="store_true", help="disable priors / attribution / distillation")
     ap.add_argument("--no-memory", action="store_true",
                     help="disable operator memory (facts/failures/skills) for this run")
+    ap.add_argument("--no-soft-scope", action="store_true",
+                    help="do not inject low-weight unverified analogies from mismatched scopes")
     ap.add_argument("--no-distill", action="store_true", help="do not update the strategy pool at the end")
     ap.add_argument("--verify-distill", action="store_true", help="replay attempts before distilling")
     ap.add_argument("--strict-provenance", action="store_true",
                     help="refuse to update performance evidence when device != claimed hardware "
                          "(e.g. CPU mechanics run labelled ascend-910b)")
+    ap.add_argument("--policy-exempt", action="store_true",
+                    help="legacy/reference/replay run: skip strict task policy checks")
+    ap.add_argument("--max-repeat-errors", type=int, default=3,
+                    help="stop after N consecutive attempts with the same error signature (0 disables)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
 
@@ -206,7 +257,8 @@ def main(argv=None) -> int:
     if not mem_prov.get("valid"):
         # mechanics-only run: file failures under cpu, not the claimed NPU scope
         mem_write_features["soc"] = "cpu"
-    memory_block = mem.context(mem_features, kinds=("fact", "failure", "skill")) if mem else ""
+    memory_block = (mem.context(mem_features, kinds=("fact", "failure", "skill"),
+                                allow_soft=not args.no_soft_scope) if mem else "")
     kb_cards = retrieve_cards(args.kb_root, feats, top_k=args.kb_cards, required_form=form) if use_rsi else []
     kb_block = render_candidates(kb_cards)
     kb_auto = None
@@ -226,15 +278,26 @@ def main(argv=None) -> int:
         return 2
 
     replayer = None
+    replay_exempt = False
     if provider == "replay":
         if not args.replay_file:
             print("ERROR: --provider replay needs --replay-file")
             return 2
         with open(args.replay_file, "r", encoding="utf-8") as fh:
-            replayer = llm_mod.ReplayModel(json.load(fh).get("responses", []))
+            replay_payload = json.load(fh)
+        replay_exempt = bool(replay_payload.get("policy_exempt", False))
+        replayer = llm_mod.ReplayModel(replay_payload.get("responses", []))
+    policy_exempt = bool(args.policy_exempt or replay_exempt)
 
-    run_name = "%s_%s" % (datetime.now().strftime("%Y%m%d-%H%M%S"), task.name)
-    run_dir = os.path.join(args.out_dir, run_name)
+    if args.resume:
+        run_dir = os.path.abspath(args.resume)
+        run_name = os.path.basename(os.path.normpath(run_dir))
+        if not os.path.isfile(os.path.join(run_dir, "checkpoint.json")):
+            print("ERROR: no checkpoint.json in --resume %s" % run_dir)
+            return 2
+    else:
+        run_name = "%s_%s" % (datetime.now().strftime("%Y%m%d-%H%M%S"), task.name)
+        run_dir = os.path.join(args.out_dir, run_name)
     os.makedirs(run_dir, exist_ok=True)
     transcript_jsonl = open(os.path.join(run_dir, "transcript.jsonl"), "a", encoding="utf-8")
     transcript_md = open(os.path.join(run_dir, "transcript.md"), "a", encoding="utf-8")
@@ -261,29 +324,54 @@ def main(argv=None) -> int:
                                      exemplars=exemplar_block, knowledge=kb_block, form=form_block,
                                      memory=memory_block)
     log("system", sys_prompt)
-    log("user", first_prompt)
-    messages = [{"role": "user", "content": first_prompt}]
+    resume = None
+    if args.resume:
+        with open(os.path.join(run_dir, "checkpoint.json"), "r", encoding="utf-8") as fh:
+            resume = json.load(fh)
+        if resume.get("task") and resume["task"] != task.name:
+            print("ERROR: checkpoint task %r does not match --task %r"
+                  % (resume["task"], task.name))
+            return 2
+        messages = list(resume.get("messages") or [{"role": "user", "content": first_prompt}])
+        log("system", "resumed from checkpoint at iteration %s (llm_calls=%s)"
+            % (resume.get("iteration"), resume.get("llm_calls")))
+    else:
+        log("user", first_prompt)
+        messages = [{"role": "user", "content": first_prompt}]
 
-    best = {"status": None, "speedup": 0.0, "path": None}
-    current_path = None
+    start_iteration = (int(resume.get("iteration") or 0) + 1) if resume else 1
+    if resume and int(resume.get("max_iters") or 0) > max_iters:
+        max_iters = int(resume["max_iters"])
+    best = (resume or {}).get("best") or {"status": None, "speedup": 0.0, "path": None}
+    current_path = (resume or {}).get("current_path")
     strikes = 0
-    passed_count = 0
-    nudge_count = 0
-    finisher = None
-    usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-    iteration = 0
+    passed_count = int((resume or {}).get("passed_count") or 0)
+    nudge_count = int((resume or {}).get("nudge_count") or 0)
+    finisher = (resume or {}).get("finisher")
+    usage_total = dict((resume or {}).get("usage_total") or
+                       {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+    usage_by_iteration = list((resume or {}).get("token_usage_by_iteration") or [])
+    llm_calls = int((resume or {}).get("llm_calls") or 0)
+    if resume:
+        kb_reads = list(resume.get("kb_reads") or [])
+        attempted_ids = set(resume.get("attempted_ids") or [])
+    iteration = start_iteration - 1
+    if replayer is not None:
+        replayer.index = llm_calls
 
-    def do_profile(path: str, it: int):
+    def do_profile(path: str, it: int, case: str = "", trial: int = 0):
         """Profile the current solution in a subprocess; returns (text, meta)."""
         from harness.profile_runner import profile as run_profile
 
         res = run_profile(args.task, path, device=args.device, backend=args.profiler,
-                          out_dir=os.path.join(run_dir, "profiling"), timeout=args.timeout, iters=3)
+                          out_dir=os.path.join(run_dir, "profiling"), timeout=args.timeout,
+                          iters=3, trial=trial, case=case)
         if res.get("status") == "ok":
             text = res["text"]
         else:
             text = "profiling unavailable (%s): %s" % (res.get("status"), res.get("error"))
-        log("profiling", text, meta={"iteration": it, "backend": args.profiler, "status": res.get("status")})
+        log("profiling", text, meta={"iteration": it, "backend": args.profiler,
+                                     "status": res.get("status"), "case": case, "trial": trial})
         if not args.quiet:
             print("profiling (%s): %s" % (args.profiler, res.get("status")))
         summary = res.get("summary") or {}
@@ -292,15 +380,77 @@ def main(argv=None) -> int:
             text = text + "\n\n" + bottlenecks.render(advice)
         meta = {"backend": args.profiler, "status": res.get("status"),
                 "top_ops": summary.get("top_ops") or None, "advice": advice or None,
-                "out_dir": res.get("out_dir")}
+                "out_dir": res.get("out_dir"), "case": case or None, "trial": trial}
         return text, meta
 
+    repeat_sig = (resume or {}).get("repeat_sig") or ""
+    repeat_count = int((resume or {}).get("repeat_count") or 0)
+    repeat_stop = False
+    max_repeat_errors = int(args.max_repeat_errors or 0)
+
+    def trajectory_summary() -> str:
+        rows = []
+        attempts_path = os.path.join(run_dir, "attempts.jsonl")
+        try:
+            with open(attempts_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        rows.append(json.loads(line))
+                    except ValueError:
+                        continue
+        except OSError:
+            pass
+        counts = {}
+        for row in rows:
+            status = str(row.get("status") or "unknown")
+            counts[status] = counts.get(status, 0) + 1
+        strategies = sorted({s for row in rows for s in (row.get("strategies_used") or [])})
+        lines = ["- evaluations: " + (", ".join("%s=%d" % kv for kv in sorted(counts.items())) or "none"),
+                 "- best: %s at %.3fx (%s)" % (best.get("status"), float(best.get("speedup") or 0.0),
+                                               best.get("path") or "no path")]
+        if strategies:
+            lines.append("- strategies tried: " + ", ".join(strategies[:10]))
+        errors = [str(row.get("error") or "").splitlines()[0][:160]
+                  for row in rows if row.get("error")]
+        if errors:
+            lines.append("- recent errors: " + " | ".join(errors[-3:]))
+        return "\n".join(lines)
+
+    def save_checkpoint(it: int) -> None:
+        payload = {
+            "schema_version": 1,
+            "task": task.name,
+            "run_id": run_name,
+            "iteration": it,
+            "max_iters": max_iters,
+            "llm_calls": llm_calls,
+            "messages": messages,
+            "best": best,
+            "current_path": current_path,
+            "passed_count": passed_count,
+            "nudge_count": nudge_count,
+            "finisher": finisher,
+            "usage_total": usage_total,
+            "token_usage_by_iteration": usage_by_iteration,
+            "kb_reads": kb_reads,
+            "attempted_ids": sorted(attempted_ids),
+            "repeat_sig": repeat_sig,
+            "repeat_count": repeat_count,
+            "saved_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        path = os.path.join(run_dir, "checkpoint.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+
     def evaluate(path: str, it: int, declared, expected) -> str:
-        nonlocal passed_count
+        nonlocal passed_count, repeat_sig, repeat_count, repeat_stop
         result = run_evaluation(
             task=args.task, solution=path, device=args.device, timeout=args.timeout,
             warmup=args.warmup, rep=args.rep, trials=args.trials,
             require=args.require or None,
+            policy_exempt=policy_exempt,
             run_id=run_name, iteration=it, out_dir=run_dir,
             results_file=args.results_file, quiet=True,
         )
@@ -308,6 +458,26 @@ def main(argv=None) -> int:
         log("harness", summary, meta={"iteration": it, "status": result.get("status")})
         status = result.get("status") or "unknown"
         speedup = float((result.get("timing") or {}).get("speedup") or 0.0)
+        repeat_note = ""
+        if status != "pass" and max_repeat_errors > 0:
+            sig = _error_signature(result)
+            if sig:
+                if sig == repeat_sig:
+                    repeat_count += 1
+                else:
+                    repeat_sig, repeat_count = sig, 1
+                if repeat_count >= 2:
+                    repeat_note = (
+                        "REPEATED FAILURE: the same error signature has occurred %d consecutive "
+                        "attempts:\n%s\nDo NOT submit another version with the same shape/axis "
+                        "logic. Re-derive the tensor shapes on paper, switch strategy, or finish."
+                        % (repeat_count, sig)
+                    )
+                if repeat_count >= max_repeat_errors:
+                    repeat_stop = True
+                    repeat_note += "\nStopping: the same failure repeated %d times." % repeat_count
+        else:
+            repeat_sig, repeat_count = "", 0
 
         resolved = []
         if use_rsi:
@@ -330,7 +500,43 @@ def main(argv=None) -> int:
             profile_text, profile_meta = do_profile(path, it)
 
         measured = speedup if status == "pass" else 0.0
+        # Counterfactual control: before a candidate can replace the best and
+        # feed strategy confidence, re-measure the previous best (revert the
+        # candidate's change set) and require a CI-significant gain.
+        ablation = None
+        evidence_eligible = True
+        promote = False
+        better = bool(status == "pass" and (
+            best.get("status") != "pass" or speedup >= float(best.get("speedup") or 0.0)))
+        if (status == "pass" and best.get("status") == "pass" and best.get("path")
+                and best.get("path") != path and (declared or resolved)
+                and speedup >= float(best.get("speedup") or 0.0)):
+            control_res = run_evaluation(
+                task=args.task, solution=best["path"], device=args.device,
+                timeout=args.timeout, warmup=args.warmup, rep=args.rep, trials=args.trials,
+                require=args.require or None, policy_exempt=policy_exempt,
+                run_id=run_name, iteration=it,
+                out_dir=os.path.join(run_dir, "ablation-%02d" % it),
+                results_file=args.results_file, quiet=True,
+            )
+            ctiming = control_res.get("timing") or {}
+            cspeed = float(ctiming.get("speedup") or 0.0)
+            ci = stats_mod.bootstrap_ratio_ci(
+                (ctiming.get("solution") or {}).get("samples_ms"),
+                (result.get("timing") or {}).get("solution", {}).get("samples_ms"))
+            significant = stats_mod.ci_excludes_one(ci)
+            ablation = {
+                "control_speedup": round(cspeed, 4),
+                "control_status": control_res.get("status"),
+                "ci95": ci,
+                "significant": bool(significant),
+            }
+            evidence_eligible = bool(significant)
+            promote = bool(significant)
+            if not significant:
+                better = False
         attempt = {
+            "schema_version": 1,
             "iter": it,
             "task": task.name,
             "task_file": os.path.abspath(args.task),
@@ -344,30 +550,49 @@ def main(argv=None) -> int:
             "uses_triton": bool((result.get("solution_features") or {}).get("uses_triton")),
             "kb_reads": list(dict.fromkeys(kb_reads)),
             "calibration_error": (round(abs(expected - measured), 4) if expected is not None else None),
+            "ablation": ablation,
+            "evidence_eligible": evidence_eligible,
+            "promote": promote,
             "profile": profile_meta,
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "distilled": False,
         }
         attempts_file.write(json.dumps(attempt, ensure_ascii=False) + "\n")
         attempts_file.flush()
+        similar_hits = []
         if mem:
             if status == "pass":
                 mem.resolve_failures(mem_write_features, run_name, "eval pass")
             else:
-                mem.record_failure_from_result(_memory_pseudo(result), mem_write_features,
-                                               run_name, task.name)
+                recorded = mem.record_failure_from_result(_memory_pseudo(result), mem_write_features,
+                                                          run_name, task.name)
+                query = _failure_text(result)
+                if query:
+                    similar_hits = [h for h in mem.similar_failures(query, top_k=4)
+                                    if h["id"] != (recorded or {}).get("id")]
 
         uses_kernel = bool((result.get("solution_features") or {}).get("uses_triton"))
-        if status == "pass" and speedup >= best["speedup"]:
-            best.update(status=status, speedup=speedup, path=path, uses_triton=uses_kernel)
-        elif best["status"] is None:
+        if better:
             best.update(status=status, speedup=speedup, path=path, uses_triton=uses_kernel)
 
         hints = failure_hints(matched, attempted_ids) if (use_rsi and status != "pass") else ""
+        similar_note = _similar_failure_hints(similar_hits) if status != "pass" else ""
+        if similar_note:
+            hints = (hints + "\n\n" + similar_note).strip()
+        if repeat_note:
+            hints = (hints + "\n\n" + repeat_note).strip()
         return build_feedback(iteration=it, status=status, summary=summary, speedup=speedup,
                               best=best, hints=hints, profiling=profile_text)
 
-    for iteration in range(1, max_iters + 1):
+    for iteration in range(start_iteration, max_iters + 1):
+        if (args.max_context_chars > 0
+                and context_mod.context_chars(messages) > args.max_context_chars):
+            before = context_mod.context_chars(messages)
+            messages = context_mod.compress_messages(
+                messages, trajectory_summary(), keep_recent=args.keep_recent)
+            after = context_mod.context_chars(messages)
+            log("system", "context compressed: %d -> %d chars at iteration %d"
+                % (before, after, iteration))
         try:
             reply = llm_mod.chat(
                 messages, system=sys_prompt, provider=provider, model=model, base_url=base_url,
@@ -382,8 +607,17 @@ def main(argv=None) -> int:
         usage = reply.get("usage") or {}
         for key in usage_total:
             usage_total[key] += int(usage.get(key, 0) or 0)
+        llm_calls += 1
+        usage_by_iteration.append({
+            "iteration": iteration,
+            "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+            "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
+            "total_tokens": int(usage.get("total_tokens", 0) or 0),
+            "context_chars": context_mod.context_chars(messages),
+        })
         messages.append({"role": "assistant", "content": text})
-        log("assistant", text, meta={"iteration": iteration})
+        log("assistant", text, meta={"iteration": iteration, "usage": usage,
+                                     "context_chars": context_mod.context_chars(messages)})
 
         action, err = parse_action(text)
         if err:
@@ -398,6 +632,7 @@ def main(argv=None) -> int:
                            "Reply with exactly one JSON object and nothing else." % err)
             messages.append({"role": "user", "content": message})
             log("user", message)
+            save_checkpoint(iteration)
             if strikes >= 3:
                 log("system", "aborting: too many unparsable replies")
                 break
@@ -419,6 +654,69 @@ def main(argv=None) -> int:
                 with open(current_path, "w", encoding="utf-8") as fh:
                     fh.write(content)
                 message = evaluate(current_path, iteration, declared, expected)
+        elif kind == "tune":
+            content = action.get("content")
+            raw_space = action.get("params")
+            if not isinstance(content, str) or not content.strip():
+                message = ("tune needs a non-empty 'content' template with {{PARAM}} placeholders "
+                           "and a 'params' object.")
+            else:
+                try:
+                    space = params_mod.parse_space(raw_space)
+                    check = params_mod.validate(content, space)
+                    if not check["ok"]:
+                        raise params_mod.ParamError(
+                            "template/params mismatch: placeholders=%s declared=%s missing=%s unused=%s"
+                            % (check["placeholders"], check["declared"],
+                               check["missing_declaration"], check["unused"]))
+                    variants = params_mod.grid(space, args.tune_max_variants, seed=iteration)
+                except params_mod.ParamError as exc:
+                    message = "tune rejected: %s" % exc
+                else:
+                    rows = []
+                    best_tune = None
+                    for idx, values in enumerate(variants):
+                        try:
+                            rendered = params_mod.render(content, values)
+                        except params_mod.ParamError as exc:
+                            message = "tune render failed: %s" % exc
+                            break
+                        path = os.path.join(run_dir, "tune_iter%02d_var%02d.py" % (iteration, idx))
+                        with open(path, "w", encoding="utf-8") as fh:
+                            fh.write(rendered)
+                        res = run_evaluation(
+                            task=args.task, solution=path, device=args.device,
+                            timeout=args.timeout, warmup=args.warmup, rep=args.rep,
+                            trials=args.trials, require=args.require or None,
+                            policy_exempt=policy_exempt, run_id=run_name, iteration=iteration,
+                            out_dir=os.path.join(run_dir, "tune-%02d" % iteration),
+                            results_file=args.results_file, quiet=True,
+                        )
+                        status = res.get("status") or "unknown"
+                        speed = float((res.get("timing") or {}).get("speedup") or 0.0)
+                        log("harness", format_summary(res),
+                            meta={"iteration": iteration, "tune_variant": idx, "params": values})
+                        rows.append({"idx": idx, "params": values, "status": status,
+                                     "speedup": speed, "path": path,
+                                     "uses_triton": bool((res.get("solution_features") or {}).get("uses_triton"))})
+                        if status == "pass" and (best_tune is None or speed > best_tune["speedup"]):
+                            best_tune = rows[-1]
+                    if rows:
+                        chosen = best_tune or max(rows, key=lambda r: r["speedup"])
+                        current_path = chosen["path"]
+                        if best_tune and (best.get("status") != "pass"
+                                          or best_tune["speedup"] > float(best.get("speedup") or 0.0)):
+                            best.update(status="pass", speedup=best_tune["speedup"],
+                                        path=best_tune["path"], uses_triton=best_tune["uses_triton"])
+                        table = "\n".join(
+                            "  %s -> %s %.3fx" % (r["params"], r["status"], r["speedup"])
+                            for r in rows)
+                        message = ("Tuned %d/%d variants (structure kept, numeric axes searched):\n%s\n"
+                                   "Best variant: %s (%s, %.3fx). The current solution is the best variant."
+                                   % (len(rows), len(variants), table, chosen["params"],
+                                      chosen["status"], chosen["speedup"]))
+                    else:
+                        message = "tune produced no variants."
         elif kind == "run_eval":
             if current_path is None:
                 message = "No solution submitted yet. Use write_solution first."
@@ -442,14 +740,59 @@ def main(argv=None) -> int:
                 else:
                     message = ("No knowledge card at id %r (use a path from the candidates list)."
                                % card_id)
+        elif kind == "memory":
+            query = str(action.get("query") or "").strip()
+            if not mem:
+                message = "Memory is disabled for this run."
+            elif not query:
+                message = "memory needs a non-empty 'query' string."
+            else:
+                hits = mem.search_text(query, top_k=5)
+                log("memory", "search %r -> %d hit(s)" % (query, len(hits)),
+                    meta={"iteration": iteration})
+                if not hits:
+                    message = "No memory records matched %r." % query
+                else:
+                    lines = ["Memory text matches for %r (NOT scope-matched; verify before use):" % query]
+                    for hit in hits:
+                        rec = hit["record"]
+                        what = (rec.get("statement") or rec.get("signature")
+                                or rec.get("name") or "")[:300]
+                        lines.append("- [%s %s] score=%.3f status=%s | %s" % (
+                            hit["type"].upper(), hit["id"], hit["score"],
+                            rec.get("confidence") or rec.get("status") or "candidate", what))
+                        scope = rec.get("scope") or {}
+                        if scope:
+                            lines.append("    scope: %s" % json.dumps(scope, ensure_ascii=False)[:240])
+                    message = ("\n".join(lines) +
+                               "\nApply a record only if its scope matches this task; otherwise treat it "
+                               "as an unverified analogy at low weight. Reply with exactly one JSON action.")
+        elif kind == "read_solution":
+            target = current_path or best.get("path")
+            if not target or not os.path.isfile(target):
+                message = "No solution file exists yet. Use write_solution first."
+            else:
+                with open(target, "r", encoding="utf-8", errors="replace") as fh:
+                    source = fh.read()
+                log("read_solution", "read %s (%d chars)" % (target, len(source)),
+                    meta={"iteration": iteration})
+                message = ("Current solution (%s):\n```python\n%s\n```\n"
+                           "Reply with exactly one JSON action." % (target, source[:40000]))
         elif kind == "profile":
             if args.profiler == "off":
                 message = "Profiling is disabled (--profiler off). Use write_solution / run_eval / finish."
             elif current_path is None:
                 message = "No solution submitted yet. Use write_solution first."
             else:
-                text, _meta = do_profile(current_path, iteration)
-                message = "Profiling result:\n```\n%s\n```\nReply with exactly one JSON action." % text
+                case = str(action.get("case") or "").strip()
+                try:
+                    trial = int(action.get("trial", 0) or 0)
+                except (TypeError, ValueError):
+                    trial = 0
+                text, _meta = do_profile(current_path, iteration, case=case, trial=trial)
+                message = ("Profiling result%s:\n```\n%s\n```\n"
+                           "Reply with exactly one JSON action."
+                           % ((" for case %r, trial %d" % (case, trial)) if case else "", text))
         elif kind == "finish":
             finisher = str(action.get("summary", ""))
             log("user", "finish requested: %s" % finisher)
@@ -466,6 +809,11 @@ def main(argv=None) -> int:
 
         messages.append({"role": "user", "content": message})
         log("user", message)
+        save_checkpoint(iteration)
+
+        if repeat_stop:
+            log("system", "stopping: repeated failure %d times" % repeat_count)
+            break
 
         if best["status"] == "pass" and best["speedup"] >= target and not args.keep_going:
             log("system", "target speedup %.2fx reached (best %.3fx) -> stopping" % (target, best["speedup"]))
@@ -518,6 +866,9 @@ def main(argv=None) -> int:
         "target_speedup": target,
         "finish_summary": finisher,
         "usage": usage_total,
+        "token_usage_by_iteration": usage_by_iteration,
+        "resumed_from": (os.path.abspath(args.resume) if args.resume else None),
+        "checkpoint": os.path.join(run_dir, "checkpoint.json"),
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
     _write_meta(run_dir, meta)

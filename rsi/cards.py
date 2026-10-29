@@ -2,12 +2,11 @@
 
 Cards are Markdown with YAML frontmatter (type/title/description/tags/status/platforms/
 updated_at), laid out as knowledge/<domain>/<scope>/.../card.md (plus operators/, recipes/).
-Point `KERNEL_AGENT_KB_ROOT` at your card tree, or use the default `knowledge/cards/`.
 
-The protocol is filter first (candidates with one-line applicability), read on demand
-(the agent's `knowledge` action loads a body), and verify against sources when needed.
-Matching is deterministic (tags + op-family keywords + platform filter); no embeddings,
-so retrieval stays explainable and cheap.
+Protocol implemented here follows the CANN team's own guidance: filter first (candidates
+with one-line applicability), read on demand (the agent's `knowledge` action loads a body),
+verify against sources when needed. Matching is deterministic (tags + op-family keywords +
+platform filter); no embeddings, so retrieval stays explainable and cheap.
 """
 from __future__ import annotations
 
@@ -17,10 +16,11 @@ import re
 import subprocess
 import time
 
-DEFAULT_KB_ROOT = os.environ.get(
-    "KERNEL_AGENT_KB_ROOT",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "knowledge", "cards"),
-)
+_REPO_KB_ROOT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "knowledge", "cards")
+DEFAULT_KB_ROOT = os.environ.get("KERNEL_AGENT_KB_ROOT", _REPO_KB_ROOT)
+if not os.path.isdir(DEFAULT_KB_ROOT) and os.path.isdir("/data2/kernel-agent/kb/cannbot-knowledge"):
+    DEFAULT_KB_ROOT = "/data2/kernel-agent/kb/cannbot-knowledge"
 INDEX_NAME = ".cards_index.json"
 EXCERPT_CHARS = 1200   # body excerpt kept in the index so scoring sees card content, not just metadata
 INDEX_TTL_SECONDS = 7 * 24 * 3600
@@ -166,6 +166,12 @@ def _score(card: dict, feats: dict, required_form: str = "") -> float:
             score += 0.8
         elif card.get("id", "").startswith("knowledge/ops/"):
             score += 0.3
+    elif required_form == "ascendc":
+        # AscendC tasks must not be steered toward triton-only recipes.
+        if "ascendc" in text or "/ops/ascendc" in card.get("id", "").lower():
+            score += 0.8
+        if "triton" in text:
+            score -= 0.6
     return score
 
 
@@ -182,6 +188,40 @@ def retrieve_cards(kb_root: str, feats: dict, top_k: int = 4, min_score: float =
             scored.append((card, score))
     scored.sort(key=lambda item: -item[1])
     return [card for card, _score_value in scored[:top_k]]
+
+
+def search_cards(kb_root: str, query: str, top_k: int = 4,
+                 platforms=("a2", "a3"), min_score: float = 0.0) -> list:
+    """Agent-driven free-text search over the same card index.
+
+    This is the tool behind `{"action":"kb_search","query":"..."}`.  It scores
+    title/description/tags/id/excerpt by query-token coverage, so the agent can
+    ask for "32B alignment SwiGLU" instead of only accepting harness-selected cards.
+    """
+    if not kb_root or not os.path.isdir(kb_root) or top_k <= 0:
+        return []
+    tokens = [t for t in re.split(r"[\s,;:/|]+", str(query or "").lower()) if len(t) >= 2]
+    if not tokens:
+        return []
+    scored = []
+    for card in load_index(kb_root):
+        if not _platform_ok(card, platforms):
+            continue
+        text = " ".join([card.get("title", ""), card.get("description", ""),
+                         " ".join(card.get("tags") or []), card.get("id", ""),
+                         card.get("excerpt", "")]).lower()
+        hits = sum(1 for token in tokens if token in text)
+        if not hits:
+            continue
+        score = hits / float(len(tokens))
+        if str(query).lower() in text:
+            score += 1.0
+        if card.get("status") == "stable":
+            score += 0.1
+        if score >= min_score:
+            scored.append((card, score))
+    scored.sort(key=lambda item: -item[1])
+    return [card for card, _score in scored[:top_k]]
 
 
 def render_candidates(cards: list, max_desc: int = 220) -> str:

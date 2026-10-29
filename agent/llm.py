@@ -118,6 +118,14 @@ def chat(
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        extra = os.environ.get("KERNEL_AGENT_LLM_EXTRA")
+        if extra:
+            try:
+                extra_payload = json.loads(extra)
+                if isinstance(extra_payload, dict):
+                    payload.update(extra_payload)
+            except ValueError:
+                pass
         data = _http_json(
             base_url.rstrip("/") + "/chat/completions",
             payload,

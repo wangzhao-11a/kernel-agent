@@ -28,10 +28,21 @@ Reply with exactly ONE JSON object, no prose outside it:
    "expected_speedup": 1.25}}
       strategies / expected_speedup are optional but strongly encouraged: they feed the
       strategy pool (calibration + evidence) for this and later tasks.
+  {{"action": "tune", "content": "<template with {{{{NAME}}}} placeholders>",
+   "params": {{"NAME": [1024, 2048, 4096]}}}}
+      Keep the structural template fixed and search only the declared numeric axes
+      on a bounded grid (tile/block/split/threads). Use it after correctness is
+      established, instead of rewriting the same code with different constants.
   {{"action": "run_eval"}}
       Re-evaluate the current solution unchanged.
+  {{"action": "read_solution"}}
+      Print the current solution source (useful after the trajectory was compressed).
   {{"action": "profile"}}
       Profile the current solution (op-level self-time breakdown) to guide the next change.
+      Optional "case": "<shape_set case name>" and "trial": <int> profile one shape only.
+  {{"action": "memory", "query": "<free text>"}}
+      Search remembered facts/failures/skills/strategies on demand. Results are text matches,
+      NOT scope-matched: check each record's scope before applying it.
   {{"action": "knowledge", "id": "<card path from the candidates list>"}}
       Load a CANN knowledge card (recipe + applicability conditions) when you need its details.
   {{"action": "finish", "summary": "<2-4 sentences: final approach, speedup, caveats>"}}

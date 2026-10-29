@@ -118,7 +118,8 @@ class StrategyStore:
             "source": source,
             "evidence": [],
             "stats": {"applied": 0, "succeeded": 0, "failed": 0, "neutral": 0,
-                      "ema_speedup": None, "calibration_mae": None},
+                      "ema_speedup": None, "calibration_mae": None,
+                      "calibration_bias": None},
             "created": _now(),
             "updated": _now(),
         }
@@ -132,7 +133,7 @@ class StrategyStore:
         return None
 
     def record_evidence(self, sid, trajectory, task, measured_speedup, outcome,
-                        expected_speedup=None, hardware="", dtype=""):
+                        expected_speedup=None, hardware="", dtype="", promote=True):
         st = self.strategies[sid]
         st["evidence"].append({
             "trajectory": trajectory, "task": task,
@@ -156,7 +157,12 @@ class StrategyStore:
             err = abs(float(expected_speedup) - float(measured_speedup))
             prev = stats.get("calibration_mae")
             stats["calibration_mae"] = round(err, 4) if prev is None else round(0.6 * prev + 0.4 * err, 4)
-        if outcome == "success" and st.get("confidence") != "seed":
+            # Positive bias = the strategy has historically over-promised.
+            bias = float(expected_speedup) - float(measured_speedup)
+            prev_bias = stats.get("calibration_bias")
+            stats["calibration_bias"] = (round(bias, 4) if prev_bias is None
+                                         else round(0.6 * float(prev_bias) + 0.4 * bias, 4))
+        if outcome == "success" and promote and st.get("confidence") != "seed":
             st["confidence"] = "verified"
         st["updated"] = _now()
         return st

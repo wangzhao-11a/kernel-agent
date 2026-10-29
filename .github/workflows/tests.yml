@@ -24,3 +24,25 @@ jobs:
         run: python scripts/memory_selftest.py
       - name: Skill compiler self-test
         run: python scripts/skills_selftest.py
+      - name: CannBench contract self-test
+        run: python scripts/cannbench_selftest.py
+      - name: Evaluation policy self-test
+        run: python scripts/policy_selftest.py
+      - name: Causal attribution self-test
+        run: python scripts/causality_selftest.py
+      - name: Meta-eval smoke
+        run: python scripts/meta_eval.py --tag ci-smoke --seeds 2 --evals 8 --tokens 1200 --threshold 2.2
+      - name: Search policy self-test
+        run: python scripts/search_selftest.py
+      - name: Structure/parameter self-test
+        run: python scripts/params_selftest.py
+      - name: Roofline and memory-query self-test
+        run: python scripts/roofline_selftest.py
+      - name: Soft-scope and failure-similarity self-test
+        run: python scripts/soft_scope_selftest.py
+      - name: Context compression and checkpoint self-test
+        run: python scripts/context_selftest.py
+      - name: Weighted shape gate self-test
+        run: python scripts/shape_gate_selftest.py
+      - name: Component ablation smoke
+        run: python scripts/ablate.py --tag ci-ablation --seeds 1 --evals 8 --tokens 600 --out runs/meta_eval

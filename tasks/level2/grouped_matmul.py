@@ -14,6 +14,15 @@ SIZES = (96, 32, 160, 64, 128, 48, 80, 112)
 TOTAL = sum(SIZES)
 
 TASK = {
+    "schema_version": 1,
+    "policy": {
+        "forbid_native_compute": False,
+        "require_kernel": False,
+        "torch_fused_exempt": True,
+        "forbid_reference": True,
+        "allow_nonfinite": False,
+        "reason": "legacy torch reference / replay fixture exemption",
+    },
     "name": "grouped_matmul",
     "level": 2,
     "description": (

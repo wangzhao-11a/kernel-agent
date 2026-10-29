@@ -40,6 +40,7 @@ def run_evaluation(
     baseline=None,
     flush_l2=None,
     fail_on_suspicious: bool = False,
+    policy_exempt: bool = False,
     ignore_require: bool = False,
     require: str = None,
     run_id: str = "",
@@ -73,6 +74,8 @@ def run_evaluation(
         cmd.append("--no-flush-l2")
     if fail_on_suspicious:
         cmd.append("--fail-on-suspicious")
+    if policy_exempt:
+        cmd.append("--policy-exempt")
     if ignore_require:
         cmd.append("--ignore-require")
     if require:
@@ -165,6 +168,8 @@ def main(argv=None) -> int:
     ap.add_argument("--flush-l2", dest="flush_l2", action="store_true", default=None)
     ap.add_argument("--no-flush-l2", dest="flush_l2", action="store_false")
     ap.add_argument("--fail-on-suspicious", action="store_true")
+    ap.add_argument("--policy-exempt", action="store_true",
+                    help="legacy/reference/replay run: skip strict task policy checks")
     ap.add_argument("--ignore-require", action="store_true")
     ap.add_argument("--require", default=None, help="run-level requirements, e.g. 'triton'")
     ap.add_argument("--run-id", default="")
@@ -179,6 +184,7 @@ def main(argv=None) -> int:
         task=args.task, solution=args.solution, device=args.device, timeout=args.timeout,
         warmup=args.warmup, rep=args.rep, trials=args.trials, baseline=args.baseline,
         flush_l2=args.flush_l2, fail_on_suspicious=args.fail_on_suspicious,
+        policy_exempt=args.policy_exempt,
         ignore_require=args.ignore_require,
         require=args.require,
         run_id=args.run_id, iteration=args.iter, out_dir=args.out_dir,

@@ -13,6 +13,15 @@ import torch
 M, K_DIM, N = 1024, 512, 512
 
 TASK = {
+    "schema_version": 1,
+    "policy": {
+        "forbid_native_compute": False,
+        "require_kernel": False,
+        "torch_fused_exempt": True,
+        "forbid_reference": True,
+        "allow_nonfinite": False,
+        "reason": "legacy torch reference / replay fixture exemption",
+    },
     "name": "quantized_matmul_w8a8",
     "level": 2,
     "description": (

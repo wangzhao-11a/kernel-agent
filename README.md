@@ -123,6 +123,195 @@ A solution is any file defining `run(...)`. The harness:
 - records provenance (`cpu` / `cuda` / `npu`) so mechanics runs cannot be
   mistaken for hardware results.
 
+### Evaluation policy (strict tasks)
+
+Legacy PyTorch tasks carry an explicit exemption:
+
+```python
+"schema_version": 1,
+"policy": {
+    "forbid_native_compute": False,
+    "require_kernel": False,
+    "torch_fused_exempt": True,
+    "reason": "legacy torch reference / replay fixture exemption",
+},
+```
+
+A kernel-only task opts in with `forbid_native_compute: true` and
+`require_kernel: true`.  While the candidate runs, a `TorchDispatchMode`
+allow-list permits allocation/view/copy/metadata ATen ops and rejects native
+compute.  AST checks are auxiliary (reference imports, dynamic task loading,
+native compute calls, kernel evidence).  A candidate that calls the reference,
+uses native compute, caches across trials, launches on a side stream, overfits a
+fixed shape, or mishandles NaN/Inf is rejected by `harness/policy.py`; see
+`scripts/policy_selftest.py`.
+
+Tasks can declare a weighted, held-out-aware shape set:
+
+```python
+"shape_set": [
+    {"name": "train", "shape": [2, 2048], "dtype": "float16", "weight": 0.7,
+     "heldout": false, "input_specs": [{"kind": "randn"}]},
+    {"name": "heldout_odd", "shape": [17, 257], "dtype": "float16", "weight": 0.0,
+     "heldout": true, "input_specs": [{"kind": "randn"}]},
+]
+```
+
+Phase 1 fixes the schema, held-out split, per-case seeds and NaN/Inf/empty/
+extreme input kinds; weighted aggregation and the worst-shape gate are Phase 4.
+`scripts/migrate_jsonl_schema.py` adds `schema_version` to old result/attempt
+JSONL files with a `.bak` copy.
+
+---
+
+## AscendC operator loop (CannBench)
+
+Besides Python tasks, the harness can drive a compiled AscendC operator package:
+
+- `harness/cannbench.py` loads a JSON spec (`tasks/cannbench_ascendc/*.json`)
+  with an allow-listed edit set and build/test/bench/profile commands, copies
+  the package into an isolated workspace, and parses per-case PASS/FAIL plus
+  `CANNBENCH_METRICS` / `CANNBENCH_PROFILE`.
+- `agent/cannbench_loop.py` runs a plan-gated loop: `plan` -> `read_file` /
+  `patch_files` -> `kb_search` / `source_grep` -> `run_eval` -> `reflect` /
+  `profile`. Edits are cumulative, a no-op write is rejected, and a failing
+  candidate rolls back to the best passing snapshot.
+- `agent/review.py` blocks known AscendC mistakes before the build (in-place
+  `Gather`, wrong `GatherMask`, header-only edits, plan/API mismatch, arch35
+  leakage, destructive rewrites).
+- `rsi/cann_ops.py` + `data/cann_ops_catalog.json` expose an offline source map
+  of the installed CANN operators; `rsi/cards.py` adds AscendC-aware retrieval
+  and free-text `kb_search`.
+
+`tasks/cannbench_ascendc/` ships SwiGlu and RMSNorm specs for 910B (plus SwiGlu
+950 and add). `work/main_tree` is the trimmed operator package they edit;
+`solutions/examples/swiglu_ascendc_910b_tiny_gather` is a reference kernel.
+
+Run the offline contract test (no NPU, compiler or API key):
+
+```bash
+python scripts/cannbench_selftest.py   # 20 checks
+```
+
+On a device, drive a spec through the normal command contract:
+
+```bash
+python -m agent.cannbench_loop \
+    --spec tasks/cannbench_ascendc/swi_glu_910b.json \
+    --max-iters 6 --api-key-env KERNEL_AGENT_API_KEY
+```
+
+## Search and meta-eval (Phase 3)
+
+`rsi/search.py` implements search policies over a synthetic operator terrain
+(`rsi/terrain.py`): the original single chain, best-first beam, UCB and Thompson
+bandits over tile/split/mode moves, staged cheap screening, and a MAP-Elites
+archive over (tile bucket, split bucket, mode) descriptors.  `scripts/meta_eval.py`
+runs them under a fixed evaluation and token budget and compares multi-seed
+success/best distributions.
+
+The tagged baseline `baseline-single-chain-v1` (5 seeds, 40 evaluations,
+6000 tokens, CPU synthetic terrain) is in `data/meta_eval/`.  The Phase-3
+comparison (`data/meta_eval/phase3-search-compare.json`) is:
+
+| policy | pass@1 | pass@2 | pass@3 | best mean | best min | best max | tokens |
+|---|---|---|---|---|---|---|---|
+| single-chain | 0.60 | 0.90 | 1.00 | 2.328 | 1.930 | 2.753 | 4800 |
+| beam | 0.20 | 0.40 | 0.60 | 2.049 | 1.864 | 2.595 | 4800 |
+| UCB | 1.00 | 1.00 | 1.00 | 3.080 | 2.558 | 3.442 | 4800 |
+| Thompson | 1.00 | 1.00 | 1.00 | 3.283 | 2.479 | 3.662 | 4800 |
+| staged | 1.00 | 1.00 | 1.00 | 2.811 | 2.476 | 3.225 | 2010 |
+| MAP-Elites | 1.00 | 1.00 | 1.00 | 2.947 | 2.499 | 3.546 | 4800 |
+
+Bandit allocation and staged screening beat the single chain on this terrain;
+the current best-first beam does not.  These are CPU synthetic mechanism results,
+not hardware/operator performance claims.  `scripts/search_selftest.py` pins the
+budget accounting and the seeded ranking.
+
+`scripts/ablate.py` adds component ablations (`data/meta_eval/phase4-ablation.json`):
+strict memory has 0 cross-SoC recall, soft scope raises it to 1.0 with every hit
+flagged unverified, and leave-one-family-out produces 0 recall and 0
+contaminating records.  Its screening proxy reuses the staged-vs-single-chain
+comparison and is explicitly **not** a profiler ablation (replay runs cannot
+measure profiler efficacy).
+
+## Observation tools (Phase 4.2)
+
+- **Roofline.** A TASK may declare `"workload": {"bytes": ..., "flops": ...}` and
+  optional `"peak_bw_gbps"` / `"peak_tflops"` (or set
+  `KERNEL_AGENT_PEAK_BW_GBPS` / `KERNEL_AGENT_PEAK_TFLOPS`).  The worker then adds
+  `timing.roofline` with achieved bandwidth/throughput, utilization and a
+  memory/compute bottleneck label; `format_summary` prints it.  This is an
+  estimate from declared traffic, not a hardware counter.
+- **On-demand memory.** The agent can call
+  `{"action": "memory", "query": "<free text>"}`.  `MemoryStore.search_text`
+  returns facts/failures/skills/strategies by token overlap (CJK bigrams included)
+  across scopes, explicitly marked **not scope-matched** so a text hit cannot be
+  mistaken for a condition-matched prior.
+- **Per-shape profiling.** `{"action": "profile", "case": "<shape_set name>",
+  "trial": 0}` profiles one declared shape instead of the first/default one
+  (torch backend).
+- **Correctness location.** A tolerance failure now reports the output index,
+  tensor shape/dtype, bad count and the first few mismatching coordinates.
+- `scripts/roofline_selftest.py` covers the roofline/memory query; the shape-gate
+  self-test covers diff locations and per-case profiling.
+
+### Soft scope and failure similarity (Phase 4.3)
+
+Strict retrieval is unchanged: a fact/failure/skill whose scope contradicts the
+current run is never presented as applicable.  The agent prompt additionally
+receives a low-weight **analogy** layer (`soft_scope_match`, 20% weight, at most
+two per kind) for records that share the op/op_family/form but differ in
+SoC/dtype/shape.  Every such record is prefixed `UNVERIFIED ANALOGY` and carries
+"verify with one experiment"; `--no-soft-scope` disables the layer.  Failed
+attempts also query past failures by text similarity
+(`MemoryStore.similar_failures`) and surface their workaround, marked as
+not scope-matched.  `scripts/soft_scope_selftest.py` pins the separation.
+
+### Long trajectories: compression, resume, per-turn accounting (Phase 4.4)
+
+When the conversation exceeds `--max-context-chars` (default 60000), the loop
+keeps the task prompt and the last `--keep-recent` messages and folds everything
+else into a structured summary (evaluation counts, best result, strategies tried,
+recent errors).  The agent can call `read_solution` to re-read the current code
+after compression.  Every turn writes `checkpoint.json` (messages, best, current
+path, usage, call count) atomically; `--resume <run_dir>` continues from it, and
+replay runs skip already-consumed responses.  `meta.json` now carries
+`token_usage_by_iteration`, and each assistant transcript row carries `usage` and
+`context_chars`.  `scripts/context_selftest.py` covers compression and a real
+checkpoint/resume round trip on CPU.
+
+### Weighted shapes and the worst-shape gate (Phase 4.5)
+
+A task with `shape_set` is timed on **every training case**.  The reported
+`timing.speedup` is the weight-normalized mean (`weighted_speedup`), all per-case
+rows are kept under `timing.shape_cases`, and `timing.worst_case` names the
+slowest shape.  When more than one training case exists, a candidate fails with
+`fail_shape_gate` if its worst case is below `shape_gate_min_speedup` (default
+0.9, set 0 to disable).  Held-out cases remain correctness-only.  The bootstrap
+interval uses within-case resampling (`bootstrap_weighted_ratio`).
+`scripts/shape_gate_selftest.py` covers a passing candidate and a candidate that
+regresses on one shape.
+
+### NPU smoke run (m18)
+
+A smoke run on one `Ascend910B4-1` (m18, NPU 4; CANN 9.1.0, torch 2.10.0+cpu,
+torch_npu 2.10.0.post4, image `vllm-ascend:dspark-a2-028`) is recorded in
+`data/hardware/m18-20261029-smoke.json`.  It verifies the NPU path only:
+
+| check | result |
+|---|---|
+| vector_add pass + provenance | pass, 1.014x, CI95 [0.820, 1.214] |
+| 12 MB roofline | pass, achieved 254 GB/s (no peak supplied, bottleneck unknown) |
+| weighted shapes + gate | good candidate passes; slow-large candidate `fail_shape_gate` |
+| strict `require_kernel` | `fail_policy` (no kernel marker) |
+| strict native compute | `fail_policy` (`native_compute: aten::mul`) |
+| held-out shape | `fail_holdout` with `first_at=[0]` |
+| replay agent | pass, 2 iterations, provenance valid |
+
+These are tiny-shape mechanism checks, not operator performance claims; the
+vector_add CI spans 1.0, so it should not be cited as a speedup.
+
 ---
 
 ## The RSI layer

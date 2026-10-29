@@ -149,6 +149,41 @@ def load_tasks(tasks_root: str) -> list:
         except Exception as exc:  # a broken task should not break the audit
             errors.append({"path": path, "error": str(exc)})
 
+    # CannBench AscendC specs are tasks too, just with a build/test command contract.
+    try:
+        from harness.cannbench import load_spec
+    except Exception:
+        load_spec = None
+    if load_spec is not None:
+        for path in sorted(glob.glob(os.path.join(tasks_root, "**", "*.json"), recursive=True)):
+            if "__pycache__" in path:
+                continue
+            try:
+                spec = load_spec(path)
+                meta = spec.metadata or {}
+                feats = {
+                    "name": spec.id,
+                    "tags": sorted(set(["cannbench", "ascendc"] +
+                                       [str(t) for t in (meta.get("tags") or [])])),
+                    "op_class": str(meta.get("op_class") or ""),
+                    "dtypes": [str(d).lower() for d in (meta.get("dtypes") or [])],
+                    "hardware": spec.hardware,
+                }
+                rows.append({
+                    "path": path,
+                    "name": spec.id,
+                    "kind": "cannbench_ascendc",
+                    "level": int(meta.get("level", 2)),
+                    "expected_speedup": float(spec.expected_speedup or 1.0),
+                    "features": feats,
+                    "op_class": feats["op_class"],
+                    "dtypes": feats["dtypes"],
+                    "tags": feats["tags"],
+                    "soc": spec.soc,
+                    "official_cases": int(meta.get("official_cases", 20)),
+                })
+            except Exception as exc:
+                errors.append({"path": path, "error": str(exc)})
     return rows, errors
 
 
@@ -447,27 +482,38 @@ def build_plan(report: dict, top: int = 6, kind: str = "") -> list:
 
         op_class = task.get("op_class") or ""
         kind = task.get("kind") or "python"
-        measured_form = ""
-        try:
-            from .forms import form_for
-            measured_form = form_for(task["features"])
-        except Exception:
-            pass
-        if measured_form == "triton_kernel":
-            forms = ["triton"]
-        elif measured_form == "torch_fused_first":
-            forms = ["torch_fused"]
+        if kind == "cannbench_ascendc":
+            forms = ["ascendc"]
+            variants = ["official-20"]
+            holdout = "held-out official case"
+            success = {
+                "base_pass_rate": 1.0,
+                "variant_pass_rate": 1.0,
+                "best_speedup": max(1.0, float(task.get("expected_speedup") or 1.0)),
+                "replay_match": 1.0,
+                "official_cases": int(task.get("official_cases") or 20),
+            }
         else:
-            forms = ["triton"] if op_class in KERNEL_FIRST else ["torch_fused"]
-        variants = ["base", "shape-x2", "dtype-bf16"]
-        holdout = "shape-x0.5"
-        success = {
-            "base_pass_rate": 0.80,
-            "variant_pass_rate": 0.60,
-            "best_speedup": max(1.10, float(task.get("expected_speedup") or 1.0) * 0.8),
-            "replay_match": 1.0,
-        }
-
+            measured_form = ""
+            try:
+                from .forms import form_for
+                measured_form = form_for(task["features"])
+            except Exception:
+                pass
+            if measured_form == "triton_kernel":
+                forms = ["triton"]
+            elif measured_form == "torch_fused_first":
+                forms = ["torch_fused"]
+            else:
+                forms = ["triton"] if op_class in KERNEL_FIRST else ["torch_fused"]
+            variants = ["base", "shape-x2", "dtype-bf16"]
+            holdout = "shape-x0.5"
+            success = {
+                "base_pass_rate": 0.80,
+                "variant_pass_rate": 0.60,
+                "best_speedup": max(1.10, float(task.get("expected_speedup") or 1.0) * 0.8),
+                "replay_match": 1.0,
+            }
         plans.append({
             "task": task["name"],
             "path": task["path"],
@@ -545,7 +591,7 @@ def main(argv=None) -> int:
         else:
             parser.add_argument("--top", type=int, default=6)
             parser.add_argument("--kind", default="",
-                                help="filter tasks by kind (currently: python)")
+                                help="filter tasks by kind: python | cannbench_ascendc")
 
     args = ap.parse_args(argv)
     report = build_audit(args.runs_root, args.knowledge_root, args.tasks_root)

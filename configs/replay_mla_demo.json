@@ -1,5 +1,6 @@
 {
   "comment": "demo: MLA concat-trick solution, profiling enabled to show the op breakdown fed back to the agent",
+  "policy_exempt": true,
   "responses": [
     {
       "action": "write_solution",

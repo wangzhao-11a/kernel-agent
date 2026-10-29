@@ -108,6 +108,8 @@ def main(argv=None) -> int:
     ap.add_argument("--device", default="auto")
     ap.add_argument("--iters", type=int, default=3)
     ap.add_argument("--top", type=int, default=10)
+    ap.add_argument("--trial", type=int, default=0)
+    ap.add_argument("--case", default="", help="shape_set case name")
     ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
 
@@ -116,7 +118,13 @@ def main(argv=None) -> int:
     solution = import_solution(args.solution)
     entry = getattr(solution, task.entrypoint)
     run = _wrap_inference(entry)
-    inputs = task.make_inputs(device, 0)
+    if args.case:
+        cases = {c["name"]: c for c in task.cases()}
+        if args.case not in cases:
+            raise SystemExit("unknown case %r (choose %s)" % (args.case, ", ".join(cases) or "none"))
+        inputs = task.case_inputs(cases[args.case], device, args.trial)
+    else:
+        inputs = task.make_inputs(device, args.trial)
     for _ in range(2):  # warmup outside the profiled region
         run(*inputs)
     dev.sync(device)

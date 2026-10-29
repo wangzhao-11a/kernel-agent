@@ -1,0 +1,1705 @@
+{
+  "schema_version": 1,
+  "tag": "baseline-single-chain-v1",
+  "git_commit": "e8f2b1eb2660d1c1c675c99c92289d541eb6ba13",
+  "git_tag": "baseline-single-chain-v1",
+  "device": "cpu",
+  "mode": "synthetic-terrain",
+  "note": "CPU synthetic mechanism check only; not a hardware/operator result",
+  "policy": "single-chain",
+  "threshold": 2.2,
+  "budget": {
+    "evals": 40,
+    "tokens": 6000,
+    "tokens_per_proposal": 120
+  },
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "summary": {
+    "pass@1": 0.6,
+    "best_mean": 2.3276,
+    "best_stdev": 0.3315,
+    "best_min": 1.9297,
+    "best_max": 2.7534,
+    "evals_mean": 40.0,
+    "tokens_mean": 4800.0
+  },
+  "runs": [
+    {
+      "seed": 1,
+      "best_candidate": [
+        512,
+        6,
+        1
+      ],
+      "best_reward": 2.5131,
+      "evals": 40,
+      "tokens": 4800,
+      "threshold_hit": true,
+      "history": [
+        {
+          "candidate": [
+            128,
+            1,
+            0
+          ],
+          "reward": 0.9102
+        },
+        {
+          "candidate": [
+            128,
+            1,
+            2
+          ],
+          "reward": 1.0443
+        },
+        {
+          "candidate": [
+            64,
+            1,
+            2
+          ],
+          "reward": 0.9833
+        },
+        {
+          "candidate": [
+            64,
+            1,
+            2
+          ],
+          "reward": 0.9467
+        },
+        {
+          "candidate": [
+            128,
+            1,
+            1
+          ],
+          "reward": 0.875
+        },
+        {
+          "candidate": [
+            128,
+            1,
+            0
+          ],
+          "reward": 0.8615
+        },
+        {
+          "candidate": [
+            256,
+            1,
+            2
+          ],
+          "reward": 0.936
+        },
+        {
+          "candidate": [
+            256,
+            1,
+            2
+          ],
+          "reward": 0.9177
+        },
+        {
+          "candidate": [
+            128,
+            1,
+            0
+          ],
+          "reward": 0.868
+        },
+        {
+          "candidate": [
+            128,
+            2,
+            2
+          ],
+          "reward": 1.1468
+        },
+        {
+          "candidate": [
+            256,
+            2,
+            2
+          ],
+          "reward": 1.1689
+        },
+        {
+          "candidate": [
+            256,
+            3,
+            2
+          ],
+          "reward": 1.2471
+        },
+        {
+          "candidate": [
+            256,
+            4,
+            2
+          ],
+          "reward": 1.4607
+        },
+        {
+          "candidate": [
+            256,
+            5,
+            2
+          ],
+          "reward": 1.6153
+        },
+        {
+          "candidate": [
+            128,
+            5,
+            2
+          ],
+          "reward": 1.5091
+        },
+        {
+          "candidate": [
+            256,
+            6,
+            2
+          ],
+          "reward": 1.7937
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            2
+          ],
+          "reward": 2.0156
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            1
+          ],
+          "reward": 2.5131
+        },
+        {
+          "candidate": [
+            512,
+            5,
+            1
+          ],
+          "reward": 2.1183
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            0
+          ],
+          "reward": 2.3638
+        },
+        {
+          "candidate": [
+            256,
+            6,
+            1
+          ],
+          "reward": 1.7544
+        },
+        {
+          "candidate": [
+            512,
+            7,
+            1
+          ],
+          "reward": 2.3864
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            0
+          ],
+          "reward": 2.4767
+        },
+        {
+          "candidate": [
+            512,
+            7,
+            1
+          ],
+          "reward": 2.3263
+        },
+        {
+          "candidate": [
+            512,
+            7,
+            1
+          ],
+          "reward": 2.3884
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            2
+          ],
+          "reward": 2.0785
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            2
+          ],
+          "reward": 2.0492
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            0
+          ],
+          "reward": 2.3931
+        },
+        {
+          "candidate": [
+            512,
+            5,
+            1
+          ],
+          "reward": 1.9969
+        },
+        {
+          "candidate": [
+            1024,
+            6,
+            1
+          ],
+          "reward": 2.4691
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            0
+          ],
+          "reward": 2.3876
+        },
+        {
+          "candidate": [
+            256,
+            6,
+            1
+          ],
+          "reward": 1.7161
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            2
+          ],
+          "reward": 2.0063
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            0
+          ],
+          "reward": 2.4958
+        },
+        {
+          "candidate": [
+            1024,
+            6,
+            1
+          ],
+          "reward": 2.4149
+        },
+        {
+          "candidate": [
+            1024,
+            6,
+            1
+          ],
+          "reward": 2.4426
+        },
+        {
+          "candidate": [
+            256,
+            6,
+            1
+          ],
+          "reward": 1.7121
+        },
+        {
+          "candidate": [
+            256,
+            6,
+            1
+          ],
+          "reward": 1.5809
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            2
+          ],
+          "reward": 1.951
+        },
+        {
+          "candidate": [
+            512,
+            5,
+            1
+          ],
+          "reward": 2.0519
+        }
+      ]
+    },
+    {
+      "seed": 2,
+      "best_candidate": [
+        1024,
+        4,
+        2
+      ],
+      "best_reward": 2.7534,
+      "evals": 40,
+      "tokens": 4800,
+      "threshold_hit": true,
+      "history": [
+        {
+          "candidate": [
+            128,
+            1,
+            0
+          ],
+          "reward": 0.9508
+        },
+        {
+          "candidate": [
+            128,
+            1,
+            2
+          ],
+          "reward": 0.9512
+        },
+        {
+          "candidate": [
+            128,
+            1,
+            0
+          ],
+          "reward": 0.8756
+        },
+        {
+          "candidate": [
+            256,
+            1,
+            2
+          ],
+          "reward": 0.9876
+        },
+        {
+          "candidate": [
+            256,
+            1,
+            1
+          ],
+          "reward": 0.9663
+        },
+        {
+          "candidate": [
+            256,
+            1,
+            2
+          ],
+          "reward": 0.9193
+        },
+        {
+          "candidate": [
+            512,
+            1,
+            2
+          ],
+          "reward": 1.0924
+        },
+        {
+          "candidate": [
+            512,
+            1,
+            2
+          ],
+          "reward": 1.0756
+        },
+        {
+          "candidate": [
+            256,
+            1,
+            2
+          ],
+          "reward": 0.9337
+        },
+        {
+          "candidate": [
+            1024,
+            1,
+            2
+          ],
+          "reward": 1.7615
+        },
+        {
+          "candidate": [
+            512,
+            1,
+            2
+          ],
+          "reward": 1.0875
+        },
+        {
+          "candidate": [
+            1024,
+            1,
+            1
+          ],
+          "reward": 1.3386
+        },
+        {
+          "candidate": [
+            1024,
+            1,
+            2
+          ],
+          "reward": 1.7563
+        },
+        {
+          "candidate": [
+            1024,
+            1,
+            1
+          ],
+          "reward": 1.3819
+        },
+        {
+          "candidate": [
+            512,
+            1,
+            2
+          ],
+          "reward": 1.0858
+        },
+        {
+          "candidate": [
+            1024,
+            2,
+            2
+          ],
+          "reward": 1.8227
+        },
+        {
+          "candidate": [
+            1024,
+            3,
+            2
+          ],
+          "reward": 2.5572
+        },
+        {
+          "candidate": [
+            1024,
+            3,
+            0
+          ],
+          "reward": 1.2684
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            2
+          ],
+          "reward": 1.4263
+        },
+        {
+          "candidate": [
+            1024,
+            3,
+            0
+          ],
+          "reward": 1.3068
+        },
+        {
+          "candidate": [
+            1024,
+            4,
+            2
+          ],
+          "reward": 2.7534
+        },
+        {
+          "candidate": [
+            2048,
+            4,
+            2
+          ],
+          "reward": 1.7487
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            2
+          ],
+          "reward": 1.5932
+        },
+        {
+          "candidate": [
+            2048,
+            4,
+            2
+          ],
+          "reward": 1.7596
+        },
+        {
+          "candidate": [
+            1024,
+            3,
+            2
+          ],
+          "reward": 2.2592
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            2
+          ],
+          "reward": 1.7645
+        },
+        {
+          "candidate": [
+            1024,
+            4,
+            0
+          ],
+          "reward": 1.3672
+        },
+        {
+          "candidate": [
+            1024,
+            4,
+            0
+          ],
+          "reward": 1.4363
+        },
+        {
+          "candidate": [
+            1024,
+            4,
+            1
+          ],
+          "reward": 2.0202
+        },
+        {
+          "candidate": [
+            2048,
+            4,
+            2
+          ],
+          "reward": 1.7618
+        },
+        {
+          "candidate": [
+            1024,
+            3,
+            2
+          ],
+          "reward": 2.4002
+        },
+        {
+          "candidate": [
+            1024,
+            4,
+            1
+          ],
+          "reward": 2.0623
+        },
+        {
+          "candidate": [
+            1024,
+            5,
+            2
+          ],
+          "reward": 2.5288
+        },
+        {
+          "candidate": [
+            2048,
+            4,
+            2
+          ],
+          "reward": 1.7262
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            2
+          ],
+          "reward": 1.6353
+        },
+        {
+          "candidate": [
+            1024,
+            4,
+            0
+          ],
+          "reward": 1.413
+        },
+        {
+          "candidate": [
+            1024,
+            4,
+            0
+          ],
+          "reward": 1.5411
+        },
+        {
+          "candidate": [
+            1024,
+            4,
+            0
+          ],
+          "reward": 1.3776
+        },
+        {
+          "candidate": [
+            1024,
+            4,
+            0
+          ],
+          "reward": 1.4359
+        },
+        {
+          "candidate": [
+            1024,
+            3,
+            2
+          ],
+          "reward": 2.1904
+        }
+      ]
+    },
+    {
+      "seed": 3,
+      "best_candidate": [
+        512,
+        6,
+        0
+      ],
+      "best_reward": 2.4973,
+      "evals": 40,
+      "tokens": 4800,
+      "threshold_hit": true,
+      "history": [
+        {
+          "candidate": [
+            128,
+            1,
+            0
+          ],
+          "reward": 0.864
+        },
+        {
+          "candidate": [
+            256,
+            1,
+            0
+          ],
+          "reward": 0.9895
+        },
+        {
+          "candidate": [
+            256,
+            1,
+            2
+          ],
+          "reward": 0.94
+        },
+        {
+          "candidate": [
+            512,
+            1,
+            0
+          ],
+          "reward": 1.3926
+        },
+        {
+          "candidate": [
+            512,
+            1,
+            2
+          ],
+          "reward": 1.1002
+        },
+        {
+          "candidate": [
+            512,
+            2,
+            0
+          ],
+          "reward": 1.5318
+        },
+        {
+          "candidate": [
+            512,
+            1,
+            0
+          ],
+          "reward": 1.447
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            0
+          ],
+          "reward": 1.7796
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            1
+          ],
+          "reward": 1.6819
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            1
+          ],
+          "reward": 1.7405
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            0
+          ],
+          "reward": 2.0847
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            0
+          ],
+          "reward": 1.7646
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            1
+          ],
+          "reward": 1.9422
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            1
+          ],
+          "reward": 1.8092
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            2
+          ],
+          "reward": 1.6295
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            2
+          ],
+          "reward": 1.6242
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            0
+          ],
+          "reward": 1.6611
+        },
+        {
+          "candidate": [
+            1024,
+            4,
+            0
+          ],
+          "reward": 1.3513
+        },
+        {
+          "candidate": [
+            256,
+            4,
+            0
+          ],
+          "reward": 1.2922
+        },
+        {
+          "candidate": [
+            512,
+            5,
+            0
+          ],
+          "reward": 2.1774
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            0
+          ],
+          "reward": 1.9687
+        },
+        {
+          "candidate": [
+            1024,
+            5,
+            0
+          ],
+          "reward": 1.5851
+        },
+        {
+          "candidate": [
+            256,
+            5,
+            0
+          ],
+          "reward": 1.5516
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            0
+          ],
+          "reward": 2.2363
+        },
+        {
+          "candidate": [
+            512,
+            7,
+            0
+          ],
+          "reward": 2.4712
+        },
+        {
+          "candidate": [
+            512,
+            7,
+            2
+          ],
+          "reward": 2.0933
+        },
+        {
+          "candidate": [
+            512,
+            7,
+            2
+          ],
+          "reward": 2.1411
+        },
+        {
+          "candidate": [
+            1024,
+            7,
+            0
+          ],
+          "reward": 1.7432
+        },
+        {
+          "candidate": [
+            512,
+            7,
+            1
+          ],
+          "reward": 2.3226
+        },
+        {
+          "candidate": [
+            512,
+            8,
+            0
+          ],
+          "reward": 2.2763
+        },
+        {
+          "candidate": [
+            1024,
+            7,
+            0
+          ],
+          "reward": 1.7711
+        },
+        {
+          "candidate": [
+            512,
+            7,
+            2
+          ],
+          "reward": 1.8664
+        },
+        {
+          "candidate": [
+            512,
+            7,
+            2
+          ],
+          "reward": 1.9388
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            0
+          ],
+          "reward": 2.4973
+        },
+        {
+          "candidate": [
+            256,
+            6,
+            0
+          ],
+          "reward": 1.5064
+        },
+        {
+          "candidate": [
+            512,
+            5,
+            0
+          ],
+          "reward": 2.2802
+        },
+        {
+          "candidate": [
+            512,
+            5,
+            0
+          ],
+          "reward": 2.2336
+        },
+        {
+          "candidate": [
+            512,
+            7,
+            0
+          ],
+          "reward": 2.4452
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            2
+          ],
+          "reward": 2.028
+        },
+        {
+          "candidate": [
+            512,
+            6,
+            1
+          ],
+          "reward": 2.323
+        }
+      ]
+    },
+    {
+      "seed": 4,
+      "best_candidate": [
+        512,
+        3,
+        0
+      ],
+      "best_reward": 1.9447,
+      "evals": 40,
+      "tokens": 4800,
+      "threshold_hit": false,
+      "history": [
+        {
+          "candidate": [
+            128,
+            1,
+            0
+          ],
+          "reward": 0.8619
+        },
+        {
+          "candidate": [
+            128,
+            2,
+            0
+          ],
+          "reward": 1.0213
+        },
+        {
+          "candidate": [
+            256,
+            2,
+            0
+          ],
+          "reward": 1.0667
+        },
+        {
+          "candidate": [
+            512,
+            2,
+            0
+          ],
+          "reward": 1.5747
+        },
+        {
+          "candidate": [
+            512,
+            2,
+            1
+          ],
+          "reward": 1.5399
+        },
+        {
+          "candidate": [
+            512,
+            2,
+            1
+          ],
+          "reward": 1.5056
+        },
+        {
+          "candidate": [
+            512,
+            2,
+            2
+          ],
+          "reward": 1.3854
+        },
+        {
+          "candidate": [
+            512,
+            2,
+            1
+          ],
+          "reward": 1.4194
+        },
+        {
+          "candidate": [
+            512,
+            2,
+            1
+          ],
+          "reward": 1.4827
+        },
+        {
+          "candidate": [
+            1024,
+            2,
+            0
+          ],
+          "reward": 1.0967
+        },
+        {
+          "candidate": [
+            512,
+            2,
+            2
+          ],
+          "reward": 1.2488
+        },
+        {
+          "candidate": [
+            1024,
+            2,
+            0
+          ],
+          "reward": 1.1233
+        },
+        {
+          "candidate": [
+            256,
+            2,
+            0
+          ],
+          "reward": 1.1001
+        },
+        {
+          "candidate": [
+            256,
+            2,
+            0
+          ],
+          "reward": 1.1098
+        },
+        {
+          "candidate": [
+            512,
+            1,
+            0
+          ],
+          "reward": 1.3635
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            0
+          ],
+          "reward": 1.9447
+        },
+        {
+          "candidate": [
+            1024,
+            3,
+            0
+          ],
+          "reward": 1.3413
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            0
+          ],
+          "reward": 1.8417
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            2
+          ],
+          "reward": 1.4892
+        },
+        {
+          "candidate": [
+            256,
+            3,
+            0
+          ],
+          "reward": 1.207
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            0
+          ],
+          "reward": 1.938
+        },
+        {
+          "candidate": [
+            1024,
+            3,
+            0
+          ],
+          "reward": 1.3671
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            2
+          ],
+          "reward": 1.4609
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            0
+          ],
+          "reward": 1.8099
+        },
+        {
+          "candidate": [
+            256,
+            3,
+            0
+          ],
+          "reward": 1.2591
+        },
+        {
+          "candidate": [
+            512,
+            2,
+            0
+          ],
+          "reward": 1.5297
+        },
+        {
+          "candidate": [
+            512,
+            2,
+            0
+          ],
+          "reward": 1.4681
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            0
+          ],
+          "reward": 1.9018
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            2
+          ],
+          "reward": 1.4341
+        },
+        {
+          "candidate": [
+            1024,
+            3,
+            0
+          ],
+          "reward": 1.2898
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            2
+          ],
+          "reward": 1.4473
+        },
+        {
+          "candidate": [
+            256,
+            3,
+            0
+          ],
+          "reward": 1.2458
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            2
+          ],
+          "reward": 1.5976
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            0
+          ],
+          "reward": 1.9126
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            1
+          ],
+          "reward": 1.624
+        },
+        {
+          "candidate": [
+            1024,
+            3,
+            0
+          ],
+          "reward": 1.2767
+        },
+        {
+          "candidate": [
+            512,
+            3,
+            1
+          ],
+          "reward": 1.7683
+        },
+        {
+          "candidate": [
+            512,
+            4,
+            0
+          ],
+          "reward": 1.921
+        },
+        {
+          "candidate": [
+            256,
+            3,
+            0
+          ],
+          "reward": 1.3219
+        },
+        {
+          "candidate": [
+            512,
+            2,
+            0
+          ],
+          "reward": 1.4588
+        }
+      ]
+    },
+    {
+      "seed": 5,
+      "best_candidate": [
+        64,
+        6,
+        2
+      ],
+      "best_reward": 1.9297,
+      "evals": 40,
+      "tokens": 4800,
+      "threshold_hit": false,
+      "history": [
+        {
+          "candidate": [
+            128,
+            1,
+            0
+          ],
+          "reward": 0.8147
+        },
+        {
+          "candidate": [
+            64,
+            1,
+            0
+          ],
+          "reward": 0.8156
+        },
+        {
+          "candidate": [
+            64,
+            1,
+            0
+          ],
+          "reward": 0.8859
+        },
+        {
+          "candidate": [
+            64,
+            1,
+            1
+          ],
+          "reward": 0.8252
+        },
+        {
+          "candidate": [
+            64,
+            2,
+            0
+          ],
+          "reward": 0.9935
+        },
+        {
+          "candidate": [
+            64,
+            2,
+            2
+          ],
+          "reward": 1.0243
+        },
+        {
+          "candidate": [
+            64,
+            1,
+            2
+          ],
+          "reward": 1.029
+        },
+        {
+          "candidate": [
+            64,
+            2,
+            2
+          ],
+          "reward": 1.1504
+        },
+        {
+          "candidate": [
+            64,
+            3,
+            2
+          ],
+          "reward": 1.3789
+        },
+        {
+          "candidate": [
+            128,
+            3,
+            2
+          ],
+          "reward": 1.2701
+        },
+        {
+          "candidate": [
+            64,
+            2,
+            2
+          ],
+          "reward": 1.1604
+        },
+        {
+          "candidate": [
+            64,
+            4,
+            2
+          ],
+          "reward": 1.4404
+        },
+        {
+          "candidate": [
+            64,
+            3,
+            2
+          ],
+          "reward": 1.2564
+        },
+        {
+          "candidate": [
+            64,
+            4,
+            1
+          ],
+          "reward": 1.3786
+        },
+        {
+          "candidate": [
+            64,
+            4,
+            0
+          ],
+          "reward": 1.2076
+        },
+        {
+          "candidate": [
+            64,
+            4,
+            2
+          ],
+          "reward": 1.4359
+        },
+        {
+          "candidate": [
+            64,
+            3,
+            2
+          ],
+          "reward": 1.3403
+        },
+        {
+          "candidate": [
+            64,
+            5,
+            2
+          ],
+          "reward": 1.623
+        },
+        {
+          "candidate": [
+            128,
+            5,
+            2
+          ],
+          "reward": 1.5889
+        },
+        {
+          "candidate": [
+            128,
+            5,
+            2
+          ],
+          "reward": 1.7783
+        },
+        {
+          "candidate": [
+            128,
+            6,
+            2
+          ],
+          "reward": 1.7545
+        },
+        {
+          "candidate": [
+            128,
+            6,
+            2
+          ],
+          "reward": 1.7037
+        },
+        {
+          "candidate": [
+            128,
+            5,
+            0
+          ],
+          "reward": 1.4307
+        },
+        {
+          "candidate": [
+            128,
+            5,
+            0
+          ],
+          "reward": 1.3871
+        },
+        {
+          "candidate": [
+            128,
+            5,
+            1
+          ],
+          "reward": 1.4931
+        },
+        {
+          "candidate": [
+            256,
+            5,
+            2
+          ],
+          "reward": 1.5945
+        },
+        {
+          "candidate": [
+            64,
+            5,
+            2
+          ],
+          "reward": 1.7663
+        },
+        {
+          "candidate": [
+            128,
+            4,
+            2
+          ],
+          "reward": 1.4607
+        },
+        {
+          "candidate": [
+            128,
+            4,
+            2
+          ],
+          "reward": 1.4707
+        },
+        {
+          "candidate": [
+            128,
+            6,
+            2
+          ],
+          "reward": 1.803
+        },
+        {
+          "candidate": [
+            128,
+            5,
+            2
+          ],
+          "reward": 1.7657
+        },
+        {
+          "candidate": [
+            128,
+            5,
+            2
+          ],
+          "reward": 1.6025
+        },
+        {
+          "candidate": [
+            128,
+            6,
+            1
+          ],
+          "reward": 1.5964
+        },
+        {
+          "candidate": [
+            128,
+            5,
+            2
+          ],
+          "reward": 1.7991
+        },
+        {
+          "candidate": [
+            128,
+            7,
+            2
+          ],
+          "reward": 1.7042
+        },
+        {
+          "candidate": [
+            128,
+            6,
+            1
+          ],
+          "reward": 1.6153
+        },
+        {
+          "candidate": [
+            128,
+            6,
+            0
+          ],
+          "reward": 1.5817
+        },
+        {
+          "candidate": [
+            64,
+            6,
+            2
+          ],
+          "reward": 1.9297
+        },
+        {
+          "candidate": [
+            64,
+            6,
+            2
+          ],
+          "reward": 1.6751
+        },
+        {
+          "candidate": [
+            64,
+            7,
+            2
+          ],
+          "reward": 1.6247
+        }
+      ]
+    }
+  ],
+  "timestamp": "2026-10-28T13:31:23Z"
+}
