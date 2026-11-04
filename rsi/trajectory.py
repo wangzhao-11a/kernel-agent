@@ -123,6 +123,16 @@ def build_trajectory(run_dir: str, hardware: str = "") -> dict:
     return traj
 
 
+def _same_outcome(replayed, recorded) -> bool:
+    """A stable and an unstable pass are the same correctness outcome.
+
+    Stability is a measurement-quality flag, so a replay may land on
+    pass_unstable (or pass) without contradicting the recorded verdict.
+    """
+    norm = {"pass_unstable": "pass"}
+    return norm.get(str(replayed), str(replayed)) == norm.get(str(recorded), str(recorded))
+
+
 def replay_trajectory(run_dir: str, device: str = "auto", timeout: float = 600.0,
                       results_file: str = None) -> dict:
     from harness.runner import run_evaluation
@@ -147,7 +157,7 @@ def replay_trajectory(run_dir: str, device: str = "auto", timeout: float = 600.0
             task=traj.get("task_file"), solution=solution, device=device, timeout=timeout,
             out_dir=replay_dir, results_file=results_file, quiet=True,
         )
-        same = res.get("status") == attempt.get("status")
+        same = _same_outcome(res.get("status"), attempt.get("status"))
         matches += 1 if same else 0
         results.append({
             "iter": attempt.get("iter"),

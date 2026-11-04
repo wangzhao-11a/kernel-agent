@@ -40,7 +40,8 @@ def latest_per_task(rows: list) -> OrderedDict:
 
 def summarize(rows: list) -> dict:
     latest = latest_per_task(rows)
-    passed = [r for r in latest.values() if r.get("status") == "pass"]
+    passed = [r for r in latest.values() if r.get("status") in ("pass", "pass_unstable")]
+    unstable = [r for r in latest.values() if r.get("status") == "pass_unstable"]
     speedups = []
     for r in passed:
         t = r.get("timing") or {}
@@ -55,6 +56,7 @@ def summarize(rows: list) -> dict:
     return {
         "tasks": len(latest),
         "passed": len(passed),
+        "unstable": len(unstable),
         "pass_rate": (len(passed) / len(latest)) if latest else 0.0,
         "fast_p": fast_p,
         "median_speedup": median,
@@ -78,6 +80,7 @@ def main(argv=None) -> int:
     if args.json:
         print(json.dumps({
             "tasks": s["tasks"], "passed": s["passed"], "pass_rate": s["pass_rate"],
+            "unstable": s["unstable"],
             "fast_p": s["fast_p"], "median_speedup": s["median_speedup"],
             "per_task": {
                 name: {

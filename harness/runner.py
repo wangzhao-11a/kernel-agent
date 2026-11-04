@@ -36,6 +36,7 @@ def run_evaluation(
     timeout: float = 600,
     warmup=None,
     rep=None,
+    rounds=None,
     trials=None,
     baseline=None,
     flush_l2=None,
@@ -63,6 +64,8 @@ def run_evaluation(
         cmd += ["--warmup", str(int(warmup))]
     if rep is not None:
         cmd += ["--rep", str(int(rep))]
+    if rounds is not None:
+        cmd += ["--rounds", str(int(rounds))]
     if trials is not None:
         cmd += ["--trials", str(int(trials))]
     if baseline:
@@ -160,6 +163,7 @@ def main(argv=None) -> int:
     ap.add_argument("--timeout", type=float, default=600)
     ap.add_argument("--warmup", type=int, default=None)
     ap.add_argument("--rep", type=int, default=None)
+    ap.add_argument("--rounds", type=int, default=None, help="ABAB measurement rounds")
     ap.add_argument("--trials", type=int, default=None)
     ap.add_argument("--baseline", default=None, help="eager | compile")
     ap.add_argument("--flush-l2", dest="flush_l2", action="store_true", default=None)
@@ -177,14 +181,15 @@ def main(argv=None) -> int:
 
     result = run_evaluation(
         task=args.task, solution=args.solution, device=args.device, timeout=args.timeout,
-        warmup=args.warmup, rep=args.rep, trials=args.trials, baseline=args.baseline,
+        warmup=args.warmup, rep=args.rep, rounds=args.rounds, trials=args.trials,
+        baseline=args.baseline,
         flush_l2=args.flush_l2, fail_on_suspicious=args.fail_on_suspicious,
         ignore_require=args.ignore_require,
         require=args.require,
         run_id=args.run_id, iteration=args.iter, out_dir=args.out_dir,
         results_file=args.results_file, append=not args.no_append, quiet=args.quiet,
     )
-    return 0 if result.get("status") == "pass" else 1
+    return 0 if result.get("status") in ("pass", "pass_unstable") else 1
 
 
 if __name__ == "__main__":

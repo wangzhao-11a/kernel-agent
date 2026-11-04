@@ -728,7 +728,7 @@ class MemoryStore:
     def record_failure_from_result(self, result: dict, features: dict,
                                    run_id: str, task_id: str = "") -> dict | None:
         status = str(result.get("status") or "")
-        if status == "pass":
+        if status in ("pass", "pass_unstable"):
             return None
         stage, signature = "runtime", status
         minimal = {"task": task_id or (normalize_features(features).get("task") or "")}
@@ -1141,7 +1141,7 @@ def main(argv=None) -> int:
         count = 0
         for attempt in attempts:
             status = str(attempt.get("status") or "")
-            if status == "pass" or not status:
+            if status in ("pass", "pass_unstable") or not status:
                 continue
             pseudo = {
                 "status": status,

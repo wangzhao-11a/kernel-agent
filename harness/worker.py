@@ -34,6 +34,8 @@ from . import benchmark as bench_mod
 from . import correctness as corr_mod
 from . import device as dev
 from . import guard as guard_mod
+from . import measure as measure_mod
+from . import noise as noise_mod
 from .tasks import TaskLoadError, load_task
 
 
@@ -160,7 +162,11 @@ def make_input_sets(task, device: str, k: int = bench_mod.DEFAULT_INPUT_SETS) ->
 
 def time_baseline(task, input_sets, device: str, warmup: int, rep: int, flush: bool,
                   requested: str):
-    """Resolve + sanity-check + time the baseline.  Returns (timing, kind, fallback, error)."""
+    """Resolve + sanity-check + time the baseline.
+
+    Returns (timing, kind, fallback, error, fn).  The timing is the pre-import
+    guard measurement; the ABAB rounds later re-measure the same function.
+    """
     b_kind = requested or task.baseline
     fallback = None
     baseline_fn = None
@@ -182,7 +188,7 @@ def time_baseline(task, input_sets, device: str, warmup: int, rep: int, flush: b
     try:
         base_t = bench_mod.benchmark(_wrap_inference(baseline_fn), input_sets=input_sets,
                                      device=device, warmup=warmup, rep=rep, flush_l2=flush)
-        return base_t, b_kind, fallback, None
+        return base_t, b_kind, fallback, None, baseline_fn
     except Exception:
         error = traceback.format_exc()
     if b_kind != "eager":
@@ -190,10 +196,10 @@ def time_baseline(task, input_sets, device: str, warmup: int, rep: int, flush: b
         try:
             base_t = bench_mod.benchmark(_wrap_inference(task.reference), input_sets=input_sets,
                                          device=device, warmup=warmup, rep=rep, flush_l2=flush)
-            return base_t, "eager", fallback, None
+            return base_t, "eager", fallback, None, task.reference
         except Exception:
             error = traceback.format_exc()
-    return None, b_kind, fallback, error
+    return None, b_kind, fallback, error, baseline_fn
 
 
 def cache_probe(task, run, device: str, input_sets) -> dict:
@@ -285,13 +291,18 @@ def format_summary(result: dict) -> str:
                 100.0 * t.get("stability_delta", 0.0),
             )
         )
+        ci = t.get("speedup_ci")
+        if ci:
+            lines.append("speedup CI95: [%.3f, %.3f] | rounds=%s | rep/round=%s" % (
+                ci[0], ci[1], t.get("n_rounds"), t.get("rep_per_round")))
+        eps = t.get("epsilon")
+        lines.append("stability gate: epsilon=%s unstable=%s" % (
+            "uncalibrated" if eps is None else "%.4f" % eps, t.get("unstable", False)))
         lines.append("timing inputs: %d rotating set(s), perturbed=%s, device_sync=%s" % (
             t.get("n_input_sets", 1), t.get("perturbed", False), t.get("device_sync", False)))
-        first = result.get("baseline_first_pass") or {}
-        second = result.get("baseline_second_pass") or {}
-        if first.get("median_ms") and second.get("median_ms"):
-            lines.append("baseline passes: first=%.4f ms second=%.4f ms (used %s)" % (
-                first["median_ms"], second["median_ms"], result.get("baseline_selected", "first")))
+        pre = result.get("baseline_pre_import") or {}
+        if pre.get("median_ms"):
+            lines.append("baseline(pre-import guard)=%.4f ms" % pre["median_ms"])
         probe = t.get("cache_probe") or {}
         if probe.get("applicable"):
             lines.append("cache probe: %s%s" % (
@@ -333,6 +344,8 @@ def main(argv=None) -> int:
     ap.add_argument("--warmup", type=int, default=None)
     ap.add_argument("--rep", type=int, default=None)
     ap.add_argument("--trials", type=int, default=None)
+    ap.add_argument("--rounds", type=int, default=measure_mod.DEFAULT_ROUNDS,
+                    help="ABAB measurement rounds (default %d)" % measure_mod.DEFAULT_ROUNDS)
     ap.add_argument("--baseline", default=None, help="override the task baseline: eager | compile")
     ap.add_argument("--flush-l2", dest="flush_l2", action="store_true", default=None)
     ap.add_argument("--no-flush-l2", dest="flush_l2", action="store_false")
@@ -348,6 +361,9 @@ def main(argv=None) -> int:
 
     t_start = time.time()
     device = dev.resolve_device(args.device)
+    # Read the calibrated noise amplitude before the solution is imported: a
+    # solution cannot loosen this run's gate by rewriting configs/noise.json.
+    epsilon = noise_mod.epsilon_for(device=device)
     result = {
         "task": None,
         "task_file": os.path.abspath(args.task),
@@ -368,6 +384,7 @@ def main(argv=None) -> int:
         "timing_inputs": None,
         "side_stream_audit": None,
         "baseline_error": None,
+        "baseline_pre_import": None,
         "run_id": args.run_id,
         "iter": args.iter,
         "timestamp": _now(),
@@ -412,11 +429,13 @@ def main(argv=None) -> int:
     }
 
     # (2) Baseline is timed before the solution import: import-time monkeypatching
-    #     of torch cannot slow the reference down.
-    base_t, b_kind, baseline_fallback, baseline_error = time_baseline(
+    #     of torch cannot slow the reference down.  This is a guard measurement;
+    #     the ABAB rounds below produce the reported speedup.
+    base_pre, b_kind, baseline_fallback, baseline_error, baseline_fn = time_baseline(
         task, input_sets, device, warmup, rep, flush, args.baseline)
     result["baseline_check"] = {"requested": str(args.baseline or task.baseline),
                                 "used": b_kind, "fallback": baseline_fallback}
+    result["baseline_pre_import"] = base_pre
     if baseline_error:
         result["baseline_error"] = _tail(baseline_error)
 
@@ -495,12 +514,13 @@ def main(argv=None) -> int:
         result["error"] = "baseline timing failed before the solution import: %s" % result["baseline_error"]
         return _finish(result, args.out, t_start)
 
+    # (4) ABAB interleaved measurement: baseline and candidate alternate for N
+    #     rounds, each round contributes one median per side, and the per-round
+    #     speedups are bootstrapped to a 95% CI.
     try:
-        sol_t = bench_mod.benchmark(run, input_sets=input_sets, device=device,
-                                    warmup=warmup, rep=rep, flush_l2=flush)
-        sol_t2 = bench_mod.benchmark(run, input_sets=input_sets, device=device,
-                                     warmup=max(1, warmup // 2), rep=max(20, rep // 2),
-                                     flush_l2=flush)
+        measurement = measure_mod.ab_benchmark(
+            run, _wrap_inference(baseline_fn), input_sets, device,
+            rounds=args.rounds, warmup=warmup, rep=rep, flush_l2=flush)
     except Exception:
         result["status"] = "bench_error"
         result["error"] = _tail(traceback.format_exc())
@@ -519,37 +539,16 @@ def main(argv=None) -> int:
         result["error"] = "monkeypatched evaluator attributes during the run: %s" % ", ".join(late)
         return _finish(result, args.out, t_start)
 
-    # First-benchmark warm-up bias (thread-pool / frequency ramp) can make the
-    # pre-import baseline several times slower than the same work measured after
-    # the process is hot.  Re-measure the baseline in the hot state and keep the
-    # *faster* of the two: the pre-import number is unpoisonable, and choosing the
-    # faster one can only lower the reported speedup.
-    base_t2, _b_kind2, _fb2, base_error2 = time_baseline(
-        task, input_sets, device, warmup, rep, flush, args.baseline)
-    result["baseline_first_pass"] = base_t
-    result["baseline_second_pass"] = base_t2
-    if base_t2 is not None and base_t2["median_ms"] < base_t["median_ms"]:
-        base_used = base_t2
-        result["baseline_selected"] = "second"
-    else:
-        base_used = base_t
-        result["baseline_selected"] = "first"
-    if base_error2:
-        result["baseline_second_error"] = _tail(base_error2)
-
-    speedup = base_used["median_ms"] / sol_t["median_ms"] if sol_t["median_ms"] > 0 else 0.0
-    stability = abs(sol_t2["median_ms"] - sol_t["median_ms"]) / max(sol_t["median_ms"], 1e-9)
+    unstable = bool(epsilon is not None and measurement["stability_delta"] > epsilon)
     result["timing"] = {
-        "solution": sol_t,
-        "solution_second_pass": sol_t2,
-        "baseline": base_used,
+        **measurement,
         "baseline_kind": b_kind,
         "baseline_fallback": baseline_fallback,
-        "speedup": round(speedup, 4),
-        "stability_delta": round(stability, 4),
+        "epsilon": epsilon,
+        "unstable": unstable,
         "n_input_sets": len(input_sets),
-        "perturbed": bool(sol_t.get("perturbed")),
-        "device_sync": bool(sol_t.get("device_sync")),
+        "perturbed": True,
+        "device_sync": dev.is_accelerator(device),
         "unit": "ms",
     }
 
@@ -574,7 +573,7 @@ def main(argv=None) -> int:
                                % (audit.get("event_median_ms", 0.0), audit.get("wall_median_ms", 0.0)))
             return _finish(result, args.out, t_start)
 
-    result["status"] = "pass"
+    result["status"] = "pass_unstable" if unstable else "pass"
     return _finish(result, args.out, t_start)
 
 

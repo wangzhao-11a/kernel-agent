@@ -23,6 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from harness.noise import classify, epsilon_for, promotion_floor  # noqa: E402
 from rsi.exemplars import record_exemplar  # noqa: E402
 from rsi.provenance import provenance  # noqa: E402
 from rsi.store import DEFAULT_ROOT, StrategyStore  # noqa: E402
@@ -190,9 +191,11 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
     feats = traj.get("features") or {}
     hardware = traj.get("hardware") or ""
     dtype = (feats.get("dtypes") or [""])[0]
+    epsilon = epsilon_for(device=traj.get("device"), hardware=hardware)
+    run_id = os.path.basename(os.path.abspath(str(run_dir).rstrip("/\\")))
     traj_ref = os.path.relpath(traj_path, ROOT)
     touched = set()
-    best = None  # (attempt, used_ids, speedup)
+    best = None  # (attempt, used_ids, speedup, outcome)
 
     for attempt in traj.get("attempts", []):
         if attempt.get("distilled") and not force:
@@ -203,6 +206,17 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
             continue
 
         status = attempt.get("status")
+        # Prefer the epsilon recorded at measurement time: the gate used for this
+        # attempt, on the device that actually produced the timing.
+        attempt_epsilon = attempt.get("epsilon")
+        eps = float(attempt_epsilon) if attempt_epsilon is not None else epsilon
+        if status == "pass_unstable":
+            report["skipped"].append({
+                "iter": attempt.get("iter"),
+                "reason": "unstable measurement (stability_delta=%s, epsilon=%s)"
+                          % (attempt.get("stability_delta"), eps),
+            })
+            continue
         speedup = float(attempt.get("speedup") or 0.0)
         expected = attempt.get("expected_speedup")
         declared = [str(d) for d in (attempt.get("strategies_declared") or []) if str(d).strip()]
@@ -210,21 +224,30 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
 
         resolved = [r for r in (resolve_declared(d, store) for d in declared_for_resolution) if r]
         used = sorted(set(resolved)) or attribute_from_source(attempt.get("solution_source") or "", store, feats)
-        outcome = "failure" if status != "pass" else ("success" if speedup >= 1.0 else "neutral")
+        if status != "pass":
+            outcome = "failure"
+        else:
+            outcome = classify(attempt.get("speedup_ci"), eps)
 
         if status == "pass" and (best is None or speedup > best[2]):
-            best = (attempt, used, speedup)
+            best = (attempt, used, speedup, outcome)
 
         for sid in used:
             store.record_evidence(sid, traj_ref, traj.get("task") or "", speedup if status == "pass" else 0.0,
-                                  outcome, expected_speedup=expected, hardware=hardware, dtype=dtype)
+                                  outcome, expected_speedup=expected, hardware=hardware, dtype=dtype,
+                                  run_id=run_id)
             touched.add(sid)
             report["evidence"].append({"strategy": sid, "iter": attempt.get("iter"),
                                        "outcome": outcome, "measured_speedup": speedup,
-                                       "expected_speedup": expected})
+                                       "expected_speedup": expected,
+                                       "speedup_ci": attempt.get("speedup_ci")})
 
-        # Promote agent-declared practices we cannot resolve yet (only with a real gain).
-        if status == "pass" and speedup > 1.05:
+        # Promote agent-declared practices we cannot resolve yet (only when the
+        # new strategy clears the stricter 1 + 2*epsilon promotion floor).
+        promote_floor = promotion_floor(eps)
+        if (status == "pass" and promote_floor is not None
+                and attempt.get("speedup_ci")
+                and float(attempt["speedup_ci"][0]) > promote_floor):
             for name in declared_for_resolution:
                 if resolve_declared(name, store) is None:
                     st = store.upsert(
@@ -233,7 +256,8 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
                         keywords=[name], expected=speedup, source="agent-declared", confidence="candidate",
                     )
                     store.record_evidence(st["id"], traj_ref, traj.get("task") or "", speedup, outcome,
-                                          expected_speedup=expected, hardware=hardware, dtype=dtype)
+                                          expected_speedup=expected, hardware=hardware, dtype=dtype,
+                                          run_id=run_id)
                     touched.add(st["id"])
                     report["created"].append({"strategy": st["id"], "statement": st["statement"]})
 
@@ -245,9 +269,10 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
         report["combos"].append({"combo": combo["id"], "members": combo["members"],
                                  "best_speedup": (combo.get("stats") or {}).get("best_speedup")})
 
-    # code exemplar: the best verified solution of the run, as a few-shot example
-    if best and best[2] >= 1.0 and (best[0].get("solution_source") or "").strip():
-        attempt, used_ids, speedup = best
+    # code exemplar: only a statistically significant win is a winning example
+    if (best and best[2] >= 1.0 and best[3] == "success"
+            and (best[0].get("solution_source") or "").strip()):
+        attempt, used_ids, speedup, _outcome = best
         profile_top = [str(row.get("op")) for row in ((attempt.get("profile") or {}).get("top_ops") or [])][:3]
         row = record_exemplar(
             store.root, traj.get("task") or "", attempt["solution_source"], speedup,
