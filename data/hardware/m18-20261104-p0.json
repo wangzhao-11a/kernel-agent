@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "tag": "m18-20261104-p0-anti-cheat",
+  "scope": "P0 evaluator-hardening verification on one Ascend910B4-1; mechanism checks, not a performance claim",
+  "host": "m18",
+  "host_name": "kylin10-6018",
+  "container": "deepinfer-real",
+  "visible_npu": "1",
+  "device": "npu",
+  "device_name": "Ascend910B4-1",
+  "driver": "npu-smi 25.5.1",
+  "cann": "9.1.0",
+  "python": "3.12.13",
+  "torch": "2.10.0+cpu",
+  "torch_npu": "2.10.0.post4",
+  "date": "2026-11-04",
+  "note": "CPU-side CI remains the gating check; this record shows the same P0 checks on the NPU path. Timings are per-run medians from harness.runner, not a performance claim.",
+  "command": "python3 -m harness.runner --task tasks/level1/softmax.py --solution tests/adversarial/<name>.py --device npu --no-append (cheats: warmup 10 / rep 50; honest: warmup 25 / rep 200)",
+  "adversarial_softmax": {
+    "cache_hack": {
+      "status": "fail_correctness",
+      "reason": "post-timing probe: stale cached output (1358/8388608 elements exceed tolerance)",
+      "reported_speedup": 6.29
+    },
+    "patch_hack": {
+      "status": "fail_suspicious",
+      "reason": "torch.softmax id changed during import"
+    },
+    "side_stream_hack": {
+      "status": "pass",
+      "speedup": 0.824,
+      "read": "no acceleration: global-sync wall timing includes side-stream work; audit event=0.156ms vs wall=0.269ms, below the 5x suspicion threshold"
+    },
+    "view_hack": {
+      "status": "fail_correctness",
+      "reason": "8388575/8388608 elements exceed tolerance"
+    },
+    "ref_read_hack": {
+      "status": "fail_suspicious",
+      "reason": "walks sys.modules and resolves reference() via getattr"
+    },
+    "honest": {
+      "status": "pass",
+      "speedups": [0.994, 1.015, 1.007],
+      "median": 1.007
+    }
+  },
+  "selftest_on_m18": {
+    "self_test": {
+      "passed": 24,
+      "failed": 0,
+      "side_stream_hack": {"status": "pass", "speedup": 0.82},
+      "honest_speedups": [1.011, 1.0, 1.0],
+      "honest_median": 1.0
+    },
+    "memory_selftest": {"passed": 13, "failed": 0},
+    "skills_selftest": {"passed": 4, "failed": 0}
+  },
+  "provenance": {
+    "npu_ascend_910b": {
+      "provenance_valid": true,
+      "evidence": 1,
+      "example": ["stg-0002", "success", "ascend-910b", 1.204]
+    },
+    "npu_claimed_nvidia_gpu": {
+      "provenance_valid": false,
+      "evidence": 0,
+      "skipped": 1
+    },
+    "cpu_ascend_910b_strict": {
+      "provenance_valid": false,
+      "evidence": 0,
+      "skipped": 1
+    },
+    "cpu_ascend_910b_allow_mechanics": {
+      "provenance_valid": false,
+      "evidence": 1,
+      "example": ["stg-0002", "neutral", "ascend-910b", 0.9621]
+    }
+  }
+}
