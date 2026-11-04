@@ -153,7 +153,7 @@ def attribute_from_source(source: str, store: StrategyStore, feats: dict) -> lis
 
 def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
                 device: str = "auto", timeout: float = 600.0, force: bool = False,
-                results_file: str = None, strict_provenance: bool = False) -> dict:
+                results_file: str = None, strict_provenance: bool = True) -> dict:
     store = store or StrategyStore()
     traj_path = os.path.join(run_dir, "trajectory.json")
     traj = read_json(traj_path) or build_trajectory(run_dir)
@@ -253,6 +253,7 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
             store.root, traj.get("task") or "", attempt["solution_source"], speedup,
             hardware=hardware, dtypes=feats.get("dtypes"), op_class=feats.get("op_class") or "",
             tags=feats.get("tags"), strategies=used_ids, profile_top=profile_top, run_ref=traj_ref,
+            device_class=prov.get("device_class") or "", evidence_valid=bool(prov.get("valid")),
         )
         report["exemplar"] = {"id": row["id"], "task": row["task"], "speedup": row["speedup"]}
 
@@ -280,9 +281,12 @@ def main(argv=None) -> int:
     ap.add_argument("--timeout", type=float, default=600.0)
     ap.add_argument("--force", action="store_true", help="re-distill attempts already distilled")
     ap.add_argument("--results-file", default=None)
-    ap.add_argument("--strict-provenance", action="store_true",
-                    help="refuse to learn performance evidence when the actual device does not match "
+    ap.add_argument("--strict-provenance", dest="strict_provenance", action="store_true", default=True,
+                    help="(default) refuse to learn performance evidence when the actual device does not match "
                          "the claimed hardware (e.g. a CPU run labelled ascend-910b)")
+    ap.add_argument("--allow-mechanics-evidence", dest="strict_provenance", action="store_false",
+                    help="explicitly allow mechanics-only runs (e.g. CPU) to write performance evidence "
+                         "under the claimed hardware label")
     args = ap.parse_args(argv)
 
     store = StrategyStore(args.root)

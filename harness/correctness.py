@@ -1,9 +1,13 @@
 """Correctness checking, framework-agnostic (torch tensors or numpy arrays).
 
 Anti-cheat by construction: inputs are re-generated per trial, the solution receives
-fresh clones, and mutation of its inputs is reported as a failure.
+fresh clones, and mutation of its inputs is reported as a failure.  On accelerators
+the device is synchronized after the candidate call, so async/side-stream work is
+finished before the outputs are read.
 """
 from __future__ import annotations
+
+from . import device as dev
 
 
 def _module_root(x) -> str:
@@ -120,6 +124,7 @@ def run_correctness(task, solution_fn, device: str, num_trials=None) -> dict:
         ref = task.reference(*inputs)
         try:
             out = solution_fn(*sol_inputs)
+            dev.sync(device)
         except Exception as exc:
             overall["ok"] = False
             overall["reason"] = "trial %d: solution raised %s: %s" % (trial, type(exc).__name__, exc)

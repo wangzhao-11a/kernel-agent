@@ -365,6 +365,9 @@ def check_rsi_loop_distill(tmp):
         "--knowledge-root", knowledge_root, "--out-dir", out_dir,
         "--results-file", os.path.join(tmp, "rsi_results.jsonl"),
         "--max-iters", "6", "--target-speedup", "0.5", "--timeout", "180",
+        # mechanics test: this run only exercises distillation, not performance
+        # evidence, so it must opt in explicitly (strict provenance is the default).
+        "--allow-mechanics-evidence",
     ]
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=600)
@@ -407,9 +410,112 @@ def check_rsi_loop_distill(tmp):
     assert len(combo["members"]) >= 2, combo
 
     before = {k: v["stats"]["applied"] for k, v in store.strategies.items()}
-    report = distill_run(run_dir, store=store)
+    report = distill_run(run_dir, store=store, strict_provenance=False)
     assert report["skipped"], report
     assert all(v["stats"]["applied"] == before[k] for k, v in store.strategies.items()), "double-counted evidence"
+
+
+def check_strict_provenance(tmp):
+    """A CPU mechanics run labelled ascend-910b must not write performance evidence."""
+    task_path = write(os.path.join(tmp, "prov_tasks", "np_softmax.py"), NP_SOFTMAX_TASK)
+    replay = write(os.path.join(tmp, "prov_replay.json"), json.dumps({
+        "responses": [
+            {"action": "write_solution", "content": NP_SOFTMAX_GOOD,
+             "strategies": ["online softmax"], "expected_speedup": 1.0},
+            {"action": "finish", "summary": "strict provenance self-test"},
+        ]
+    }, ensure_ascii=False))
+
+    def run_loop(name, extra):
+        out_dir = os.path.join(tmp, name + "_runs")
+        root = os.path.join(tmp, name + "_knowledge")
+        cmd = [
+            sys.executable, "-m", "agent.loop", "--task", task_path, "--provider", "replay",
+            "--replay-file", replay, "--device", "cpu", "--hardware", "ascend-910b",
+            "--knowledge-root", root, "--out-dir", out_dir,
+            "--results-file", os.path.join(tmp, name + "_results.jsonl"),
+            "--max-iters", "4", "--target-speedup", "0.5", "--timeout", "180",
+            "--profiler", "off",
+        ] + list(extra)
+        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=600)
+        assert proc.returncode == 0, (proc.stdout[-1500:] + "\n" + proc.stderr[-1500:])
+        metas = glob.glob(os.path.join(out_dir, "*", "meta.json"))
+        assert len(metas) == 1, metas
+        with open(metas[0], encoding="utf-8") as fh:
+            meta = json.load(fh)
+        path = os.path.join(root, "strategies.jsonl")
+        rows = []
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as fh:
+                rows = [json.loads(line) for line in fh if line.strip()]
+        return meta, rows, root
+
+    meta, rows, root = run_loop("prov_strict", [])
+    distill = meta["rsi"]["distill"] or {}
+    assert distill.get("provenance_valid") is False, distill
+    assert distill.get("evidence") == 0, distill
+    assert all(not row.get("evidence") for row in rows), "mechanics evidence leaked into the pool"
+    assert not os.path.isfile(os.path.join(root, "exemplars.jsonl")), "mechanics exemplar recorded"
+
+    meta2, rows2, _root2 = run_loop("prov_allow", ["--allow-mechanics-evidence"])
+    distill2 = meta2["rsi"]["distill"] or {}
+    assert distill2.get("provenance_valid") is False, distill2
+    assert int(distill2.get("evidence") or 0) >= 1, distill2
+    evidence = [e for row in rows2 for e in (row.get("evidence") or [])]
+    assert any(e.get("hardware") == "ascend-910b" for e in evidence), evidence
+
+
+def check_adversarial_solutions(tmp):
+    """Every cheat must be rejected; the honest control must still pass."""
+    import statistics as stats_mod
+
+    from harness import device as dev
+    from harness.runner import run_evaluation
+
+    task = os.path.join(ROOT, "tasks", "level1", "softmax.py")
+    root = os.path.join(ROOT, "tests", "adversarial")
+    common = dict(device="cpu", timeout=600, out_dir=os.path.join(tmp, "adv_out"),
+                  results_file=os.path.join(tmp, "adv_results.jsonl"), quiet=True)
+
+    def run(name, **extra):
+        opts = dict(common)
+        opts.update(extra)
+        return run_evaluation(task=task, solution=os.path.join(root, name), **opts)
+
+    cache = run("cache_hack.py", rep=50)
+    assert cache["status"] == "fail_correctness", (cache["status"], cache.get("error"))
+    assert "stale" in (cache.get("error") or "").lower(), cache.get("error")
+
+    patch = run("patch_hack.py", rep=50)
+    assert patch["status"] == "fail_suspicious", (patch["status"], patch.get("error"))
+    assert "torch.softmax" in (patch.get("error") or ""), patch.get("error")
+
+    view = run("view_hack.py", rep=50)
+    assert view["status"] == "fail_correctness", (view["status"], view.get("error"))
+
+    ref = run("ref_read_hack.py", rep=50)
+    assert ref["status"] == "fail_suspicious", (ref["status"], ref.get("error"))
+
+    accelerator = dev.is_accelerator(dev.resolve_device("auto"))
+    if accelerator:
+        side = run("side_stream_hack.py", rep=50, device="auto")
+        speed = float((side.get("timing") or {}).get("speedup") or 0.0)
+        assert side["status"] != "pass" or speed < 1.2, (side["status"], speed)
+        print("  side_stream_hack: status=%s speedup=%.3fx" % (side["status"], speed))
+    else:
+        print("  SKIP side_stream_hack: needs a CUDA/NPU device (CPU has no streams)")
+
+    speeds = []
+    for _ in range(3):
+        res = run("honest.py", warmup=25, rep=200)
+        assert res["status"] == "pass", (res["status"], res.get("error"))
+        speeds.append(float(res["timing"]["speedup"]))
+    median = stats_mod.median(speeds)
+    assert 0.9 <= median <= 1.1, (
+        "honest median speedup %.3f outside [0.9, 1.1] (runs %s)" % (median, speeds))
+    print("  honest speedups: %s (median %.3f)" % (
+        ", ".join("%.3f" % s for s in speeds), median))
 
 
 def check_rsi_attribution_precision(tmp):
@@ -468,6 +574,12 @@ def check_knowledge_blocks(tmp):
     weak = retrieve_exemplars(root, {"name": "weak_task", "tags": [], "op_class": "", "dtypes": ["float32"]},
                               "ascend-910b", top_k=5)
     assert all(r["task"] != "weak_task" for r in weak), weak
+
+    # exemplars must state their real provenance, not claim hardware verification
+    mech = record_exemplar(root, "mech_task", "def run():\n    return 1\n", 1.2,
+                           hardware="ascend-910b", device_class="cpu", evidence_valid=False)
+    mech_block = render_exemplars([mech])
+    assert "mechanics-only" in mech_block and "measured on cpu" in mech_block, mech_block
 
     advice = bottlenecks.lookup({"top_ops": [{"op": "aten::_local_scalar_dense", "pct": 77.0}]})
     assert advice and "Host sync" in advice[0], advice
@@ -792,6 +904,7 @@ def main():
     check("rsi: strategy pool bootstrap + retrieval priors", lambda: check_rsi_store_and_retrieve(tmp))
     check("rsi: applicability conditions narrow with evidence", lambda: check_rsi_condition_refinement(tmp))
     check("rsi: loop records trajectory, distills, reuses priors", lambda: check_rsi_loop_distill(tmp))
+    check("rsi: strict provenance blocks CPU evidence for ascend-910b", lambda: check_strict_provenance(tmp))
     check("rsi: attribution precision (declarations resolve, prose ignored)", lambda: check_rsi_attribution_precision(tmp))
     check("rsi: knowledge blocks (exemplars, bottleneck playbook, calibration)", lambda: check_knowledge_blocks(tmp))
     check("harness: require-triton gate + op-baseline sanity check", lambda: check_constraint_and_baseline(tmp))
@@ -804,6 +917,8 @@ def main():
         check("profiling: agent feedback carries the breakdown", lambda: check_agent_profiling(tmp))
         check("torch: vector_add good/wrong examples", lambda: check_torch_examples(tmp))
         check("torch: softmax_manual example", lambda: check_torch_softmax(tmp))
+        check("adversarial: cheat regression set (cache/patch/side-stream/view/reference)",
+          lambda: check_adversarial_solutions(tmp))
         check("real-world tasks: example solutions pass on CPU",
           lambda: check_ascend_tasks(tmp))
     else:

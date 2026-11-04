@@ -47,7 +47,8 @@ def _write_jsonl(path: str, rows: list) -> None:
 
 def record_exemplar(root: str, task: str, source: str, speedup: float, hardware: str = "",
                     dtypes=None, op_class: str = "", tags=None, strategies=None,
-                    profile_top=None, run_ref: str = "") -> dict:
+                    profile_top=None, run_ref: str = "", device_class: str = "",
+                    evidence_valid: bool = None) -> dict:
     """Store a winning solution (idempotent by content hash)."""
     path = os.path.join(root, EXEMPLARS_FILE)
     rows = _read_jsonl(path)
@@ -55,6 +56,10 @@ def record_exemplar(root: str, task: str, source: str, speedup: float, hardware:
     for row in rows:
         if row.get("id") == digest:
             row["speedup"] = round(max(float(row.get("speedup") or 0.0), float(speedup)), 4)
+            if device_class:
+                row["device_class"] = device_class
+            if evidence_valid is not None:
+                row["evidence_valid"] = bool(evidence_valid)
             row["updated"] = _now()
             _write_jsonl(path, rows)
             return row
@@ -63,6 +68,8 @@ def record_exemplar(root: str, task: str, source: str, speedup: float, hardware:
         "task": task,
         "speedup": round(float(speedup), 4),
         "hardware": hardware,
+        "device_class": device_class,
+        "evidence_valid": evidence_valid,
         "dtypes": list(dtypes or []),
         "op_class": op_class,
         "tags": list(tags or []),
@@ -114,14 +121,19 @@ def render_exemplars(exemplars: list, max_chars: int = 6000) -> str:
     if not exemplars:
         return ""
     lines = [
-        "## Code exemplars from the pool (already verified on hardware — study, reuse or beat)",
-        "These solutions passed correctness and were measured under matching conditions:",
+        "## Code exemplars from the pool (study, reuse or beat; each entry states its provenance)",
+        "These solutions passed correctness; timings were measured under the conditions shown:",
     ]
     budget = max_chars
     for row in exemplars:
         header = "### %s on %s — %.2fx (strategies: %s)" % (
             row.get("task"), row.get("hardware") or "?", float(row.get("speedup") or 0.0),
             ", ".join(row.get("strategies") or []) or "-")
+        if row.get("evidence_valid") is False:
+            header += " [mechanics-only: measured on %s, not %s performance evidence]" % (
+                row.get("device_class") or "unknown", row.get("hardware") or "the claimed hardware")
+        elif row.get("device_class"):
+            header += " [measured on %s]" % row["device_class"]
         if row.get("profile_top"):
             header += "\n# profile top ops: %s" % ", ".join(str(o) for o in row["profile_top"][:3])
         code = "```python\n%s\n```" % (row.get("source") or "").strip()
