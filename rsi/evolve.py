@@ -33,6 +33,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_RUNS_ROOT = os.path.join(ROOT, "runs", "agent")
 DEFAULT_TASKS_ROOT = os.path.join(ROOT, "tasks")
 DEFAULT_KNOWLEDGE_ROOT = os.path.join(ROOT, "rsi", "knowledge")
+HOLDOUT_PATH = os.path.join(ROOT, "configs", "holdout.json")
 
 # op families where a kernel form is the measured winner (see rsi/forms.py)
 KERNEL_FIRST = {"attention", "gemm", "reduction"}
@@ -388,6 +389,15 @@ def _fmt(value, fmt="%.2f"):
 
 
 # --------------------------------------------------------------------------- plan
+def holdout_label(task_name: str) -> str:
+    """The configured holdout case for a task (falls back to the planned x0.5 shape)."""
+    data = read_json(HOLDOUT_PATH)
+    cases = (((data or {}).get("tasks") or {}).get(task_name) or {}).get("cases") or []
+    if cases:
+        return str(cases[0].get("name") or "shape-x0.5")
+    return "shape-x0.5"
+
+
 def build_plan(report: dict, top: int = 6, kind: str = "") -> list:
     runs = report["runs"]
     all_tasks = report["tasks"]
@@ -460,7 +470,7 @@ def build_plan(report: dict, top: int = 6, kind: str = "") -> list:
         else:
             forms = ["triton"] if op_class in KERNEL_FIRST else ["torch_fused"]
         variants = ["base", "shape-x2", "dtype-bf16"]
-        holdout = "shape-x0.5"
+        holdout = holdout_label(task["name"])
         success = {
             "base_pass_rate": 0.80,
             "variant_pass_rate": 0.60,

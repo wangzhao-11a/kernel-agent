@@ -29,7 +29,10 @@ def _quality(strategy: dict) -> float:
     succeeded = int(stats.get("succeeded") or 0)
     rate = (succeeded / applied) if applied else 0.4
     ema = float(stats.get("ema_speedup") or 1.0)
-    base = rate * (1.0 + 0.5 * (ema - 1.0))
+    calibration = float(stats.get("calibration_mae") or 0.0)
+    # A strategy whose predicted gains are chronically off gets down-weighted even
+    # if it occasionally measures fast (P3.3).
+    base = rate * (1.0 + 0.5 * (ema - 1.0)) / (1.0 + max(0.0, calibration))
     explore = 0.25 / math.sqrt(1.0 + applied)
     confidence = {"seed": 0.15, "verified": 0.30, "candidate": 0.05}.get(strategy.get("confidence"), 0.1)
     return base + explore + confidence

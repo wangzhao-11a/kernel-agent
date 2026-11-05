@@ -26,9 +26,12 @@ executes anything else from the task module.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 
 DEFAULT_TOLERANCE = {"atol": 1e-5, "rtol": 1e-5}
+HOLDOUT_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "configs", "holdout.json")
 
 _DTYPE_NAMES = {
     "float32": "float32", "float": "float32", "fp32": "float32",
@@ -43,7 +46,7 @@ class TaskLoadError(Exception):
 
 
 class Task:
-    def __init__(self, path: str, module, meta: dict):
+    def __init__(self, path: str, module, meta: dict, holdout_cases=None):
         self.path = os.path.abspath(path)
         self.module = module
         self.meta = meta
@@ -60,6 +63,7 @@ class Task:
         self.flush_l2 = bool(meta.get("flush_l2", True))
         self.expected_speedup = float(meta.get("expected_speedup", 1.0))
         self.input_specs = meta.get("input_specs")
+        self.holdout_cases = list(holdout_cases or [])
         self.source = _read_source(self.path)
 
     @property
@@ -79,8 +83,40 @@ class Task:
             "task %s defines neither make_inputs() nor TASK['input_specs']" % self.path
         )
 
+    def holdout_inputs(self, case: dict, device: str, trial: int):
+        """Inputs for one holdout case; requires TASK['input_specs'].
 
-def load_task(path: str) -> Task:
+        Holdout shapes live in configs/holdout.json (not in the task source), so
+        the agent's prompt and training loop never see them.
+        """
+        if not self.input_specs:
+            raise TaskLoadError(
+                "task %s has custom make_inputs(); holdout shapes cannot be injected" % self.path)
+        shapes = list((case or {}).get("shapes") or [])
+        specs = []
+        for index, spec in enumerate(self.input_specs):
+            item = dict(spec)
+            if shapes:
+                shape = shapes[index] if index < len(shapes) else shapes[-1]
+                item["shape"] = list(shape)
+            specs.append(item)
+        return _inputs_from_specs(specs, device, 10000 + int(trial))
+
+
+def _holdout_cases(task_name: str, holdout_config: str = None) -> list:
+    path = holdout_config or HOLDOUT_PATH
+    if not path or not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    entry = ((data or {}).get("tasks") or {}).get(task_name) or {}
+    return list(entry.get("cases") or [])
+
+
+def load_task(path: str, holdout_config: str = None) -> Task:
     if not os.path.isfile(path):
         raise TaskLoadError("task file not found: %s" % path)
     stem = os.path.splitext(os.path.basename(path))[0]
@@ -90,7 +126,8 @@ def load_task(path: str) -> Task:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     meta = dict(getattr(module, "TASK", {}) or {})
-    return Task(path, module, meta)
+    name = meta.get("name") or stem
+    return Task(path, module, meta, holdout_cases=_holdout_cases(name, holdout_config))
 
 
 def _read_source(path: str) -> str:

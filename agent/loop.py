@@ -49,6 +49,7 @@ from rsi.exemplars import render_exemplars, retrieve_exemplars  # noqa: E402
 from rsi.features import hardware_from_device, task_features  # noqa: E402
 from rsi.forms import form_for, form_hint  # noqa: E402
 from rsi.memory import MemoryStore  # noqa: E402
+from rsi.memory import shape_signature  # noqa: E402
 from rsi.provenance import provenance  # noqa: E402
 from rsi.retrieve import combos_for, failure_hints, priors_block, retrieve  # noqa: E402
 from rsi.store import DEFAULT_ROOT as DEFAULT_KNOWLEDGE_ROOT  # noqa: E402
@@ -184,6 +185,13 @@ def main(argv=None) -> int:
     resolved_device = dev.resolve_device(args.device)
     feats = task_features(task)
     hardware = args.hardware or feats.get("hardware") or hardware_from_device(resolved_device)
+    try:
+        spec0 = (task.input_specs or [{}])[0] if task.input_specs else {}
+        shape_sig = (shape_signature(spec0.get("shape"), -1,
+                                     (feats.get("dtypes") or ["float32"])[0])
+                     if spec0.get("shape") else {})
+    except Exception:
+        shape_sig = {}
 
     store = StrategyStore(args.knowledge_root) if use_rsi else None
     matched = retrieve(store, feats, hardware, top_k=5) if use_rsi else []
@@ -346,10 +354,15 @@ def main(argv=None) -> int:
             "stability_delta": timing.get("stability_delta"),
             "epsilon": timing.get("epsilon"),
             "unstable": status == "pass_unstable",
+            "holdout": timing.get("holdout"),
+            "holdout_ok": (bool((timing.get("holdout") or {}).get("success"))
+                           if timing.get("holdout") else None),
+            "shape_signature": shape_sig,
             "error": result.get("error"),
             "expected_speedup": expected,
             "strategies_declared": list(declared),
             "strategies_used": resolved,
+            "exemplars_used": [row["id"] for row in exemplars],
             "uses_triton": bool((result.get("solution_features") or {}).get("uses_triton")),
             "kb_reads": list(dict.fromkeys(kb_reads)),
             "calibration_error": (round(abs(expected - measured), 4) if expected is not None else None),

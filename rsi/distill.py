@@ -24,7 +24,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from harness.noise import classify, epsilon_for, promotion_floor  # noqa: E402
-from rsi.exemplars import record_exemplar  # noqa: E402
+from rsi.exemplars import record_exemplar, update_descendant_gain  # noqa: E402
 from rsi.provenance import provenance  # noqa: E402
 from rsi.store import DEFAULT_ROOT, StrategyStore  # noqa: E402
 from rsi.trajectory import build_trajectory, read_json, replay_trajectory, write_jsonl  # noqa: E402
@@ -170,6 +170,7 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
         "refined": [],
         "skipped": [],
         "exemplar": None,
+        "descendant_gain": [],
     }
     prov = provenance({"device": traj.get("device"), "hardware": traj.get("hardware")})
     report["provenance"] = prov
@@ -235,12 +236,15 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
         for sid in used:
             store.record_evidence(sid, traj_ref, traj.get("task") or "", speedup if status == "pass" else 0.0,
                                   outcome, expected_speedup=expected, hardware=hardware, dtype=dtype,
-                                  run_id=run_id)
+                                  run_id=run_id, holdout_ok=attempt.get("holdout_ok"),
+                                  shape_signature=attempt.get("shape_signature"))
             touched.add(sid)
             report["evidence"].append({"strategy": sid, "iter": attempt.get("iter"),
                                        "outcome": outcome, "measured_speedup": speedup,
                                        "expected_speedup": expected,
-                                       "speedup_ci": attempt.get("speedup_ci")})
+                                       "speedup_ci": attempt.get("speedup_ci"),
+                                       "holdout_ok": attempt.get("holdout_ok"),
+                                       "shape_signature": attempt.get("shape_signature")})
 
         # Promote agent-declared practices we cannot resolve yet (only when the
         # new strategy clears the stricter 1 + 2*epsilon promotion floor).
@@ -281,6 +285,18 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
             device_class=prov.get("device_class") or "", evidence_valid=bool(prov.get("valid")),
         )
         report["exemplar"] = {"id": row["id"], "task": row["task"], "speedup": row["speedup"]}
+
+    # P3.5: credit the exemplars this run started from when their descendants
+    # reached a better speedup than the exemplar itself.
+    used_exemplars = sorted({str(eid)
+                             for attempt in traj.get("attempts", [])
+                             for eid in (attempt.get("exemplars_used") or []) if str(eid)})
+    if used_exemplars and best:
+        updated = update_descendant_gain(store.root, used_exemplars, best[2])
+        report["descendant_gain"] = [
+            {"id": row["id"], "descendant_gain": row.get("descendant_gain")}
+            for row in updated
+        ]
 
     for sid in sorted(touched):
         note = store.refine_conditions(sid)
