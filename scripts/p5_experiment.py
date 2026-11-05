@@ -93,7 +93,7 @@ def _scheduler_cmd(args, out_dir: str, train_root: str, knowledge_root: str,
     cmd = [
         sys.executable, "-m", "rsi.schedule", "--budget-iters", str(int(budget)),
         "--approve", "auto", "--top", str(max(1, len(args.train_tasks))),
-        "--seeds", str(args.seeds), "--variants", "base",
+        "--seeds", str(args.train_seeds), "--variants", "base",
         "--max-iters", str(args.max_iters), "--target-speedup", str(args.target_speedup),
         "--provider", args.provider, "--model", args.model, "--base-url", args.base_url,
         "--api-key-env", args.api_key_env, "--device", args.device,
@@ -377,6 +377,8 @@ def main(argv=None) -> int:
     ap.add_argument("--train-tasks", default=DEFAULT_TRAIN)
     ap.add_argument("--groups", default="kb,no_rsi")
     ap.add_argument("--seeds", type=int, default=5)
+    ap.add_argument("--train-seeds", type=int, default=1,
+                    help="seeds per training task (coverage-first default)")
     ap.add_argument("--max-iters", type=int, default=8)
     ap.add_argument("--target-speedup", type=float, default=5.0)
     ap.add_argument("--train-budget", type=int, default=24)
