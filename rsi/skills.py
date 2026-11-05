@@ -214,6 +214,93 @@ def validate_skill(store: MemoryStore, name: str, scope: dict, command: str,
             "runs": len(runs), "tail": (proc.stdout + proc.stderr)[-1200:]}
 
 
+def auto_compile_from_run(store: MemoryStore, strategy: dict, task_path: str,
+                          source: str, features: dict, hardware: str, speedup: float,
+                          device: str = "cpu", timeout: float = 900.0,
+                          source_ref: str = "") -> dict:
+    """Compile a verified strategy's best solution into a validated skill.
+
+    Numeric knobs whose names look like constants (BLOCK/TILE/UNROLL/...) become
+    template parameters; a parameter-free solution is stored as a code template.
+    The rendered template is validated by two independent harness runs.
+    """
+    from harness.runner import run_evaluation
+
+    task_name = str((features or {}).get("name")
+                    or os.path.splitext(os.path.basename(task_path))[0])
+    key = str(strategy.get("key") or strategy.get("id") or "practice")
+    safe = lambda text: re.sub(r"[^A-Za-z0-9_]", "_", str(text))
+    name = "auto_%s_%s" % (safe(key), safe(task_name))
+    feature_dict = {
+        "op": task_name, "op_family": (features or {}).get("op_class"),
+        "soc": hardware, "dtype": (features or {}).get("dtypes") or [],
+        "form": [],
+    }
+    scope = scope_of(feature_dict)
+    scope.pop("task", None)
+    existing = find_skill(store, name, scope)
+    if existing and existing.get("confidence") == "verified":
+        return {"status": "exists", "skill": existing, "passes":
+                (existing.get("validation") or {}).get("passes")}
+
+    params = []
+    for match in re.finditer(r"(?m)^[ \t]*([A-Z][A-Z0-9_]{1,15})[ \t]*=[ \t]*(\d+)[ \t]*$",
+                             source or ""):
+        params.append({"name": match.group(1), "value": int(match.group(2))})
+        if len(params) >= 4:
+            break
+    try:
+        template, parameters = compile_template(source, params)
+    except SkillCompileError:
+        template, parameters = source, []
+    rendered = render_template(template, {p["name"]: p.get("default") for p in parameters})
+
+    tmp = tempfile.mkdtemp(prefix="auto-skill-")
+    solution_path = os.path.join(tmp, "rendered.py")
+    with open(solution_path, "w", encoding="utf-8") as fh:
+        fh.write(rendered)
+    runs = []
+    for index in (1, 2):
+        result = run_evaluation(
+            task=task_path, solution=solution_path, device=device, timeout=timeout,
+            run_id="auto-skill-%s-%d" % (safe(name), index),
+            out_dir=os.path.join(tmp, "out%d" % index),
+            results_file=os.path.join(tmp, "results.jsonl"), append=False,
+            quiet=True, holdout=False,
+        )
+        timing = result.get("timing") or {}
+        runs.append({
+            "run": index,
+            "passed": result.get("status") in ("pass", "pass_unstable"),
+            "status": result.get("status"),
+            "speedup": timing.get("speedup"),
+            "speedup_ci": timing.get("speedup_ci"),
+        })
+    passes = sum(1 for row in runs if row.get("passed"))
+    record = {
+        "name": name,
+        "language": "python",
+        "scope": scope,
+        "preconditions": [
+            "correctness passes on the source task",
+            "two independent validation runs passed",
+            "hardware=%s" % (hardware or "unknown"),
+        ],
+        "parameters": parameters,
+        "template": template,
+        "template_ref": source_ref,
+        "validation": {"runs": runs, "passes": passes, "independent": True},
+        "measured": {"speedup": float(speedup or 0.0)},
+        "confidence": "verified" if passes >= 2 else "candidate",
+        "invalidators": [],
+        "auto_generated": True,
+        "strategy": strategy.get("id"),
+    }
+    row = store.add_skill(record)
+    return {"status": "compiled", "skill": row, "passes": passes,
+            "confidence": row.get("confidence")}
+
+
 def _add_scope_args(p):
     p.add_argument("--op", default="")
     p.add_argument("--op-family", default="")

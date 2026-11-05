@@ -146,6 +146,8 @@ def load_tasks(tasks_root: str) -> list:
                 "op_class": feats.get("op_class") or "",
                 "dtypes": feats.get("dtypes") or [],
                 "tags": feats.get("tags") or [],
+                "synthetic": bool((task.meta or {}).get("synthetic")),
+                "source_task": str((task.meta or {}).get("source_task") or ""),
             })
         except Exception as exc:  # a broken task should not break the audit
             errors.append({"path": path, "error": str(exc)})
@@ -471,6 +473,12 @@ def build_plan(report: dict, top: int = 6, kind: str = "") -> list:
             forms = ["triton"] if op_class in KERNEL_FIRST else ["torch_fused"]
         variants = ["base", "shape-x2", "dtype-bf16"]
         holdout = holdout_label(task["name"])
+        synthetic = bool(task.get("synthetic"))
+        if synthetic:
+            # P4.3: synthetic tasks are cheap to generate, so they must not
+            # dominate the curriculum score.  Real-task progress stays the driver.
+            score *= 0.3
+            reasons.append("synthetic task: score capped at 30%")
         success = {
             "base_pass_rate": 0.80,
             "variant_pass_rate": 0.60,
@@ -482,6 +490,7 @@ def build_plan(report: dict, top: int = 6, kind: str = "") -> list:
             "task": task["name"],
             "path": task["path"],
             "kind": kind,
+            "synthetic": synthetic,
             "level": task["level"],
             "op_class": op_class,
             "dtypes": task["dtypes"],
@@ -505,7 +514,16 @@ def build_plan(report: dict, top: int = 6, kind: str = "") -> list:
             },
         })
     plans.sort(key=lambda row: -row["score"])
-    return plans[:max(1, int(top))]
+    # Synthetic tasks are capped: real tasks fill the plan first, and at most
+    # one third of the requested slots can be synthetic.
+    real = [row for row in plans if not row.get("synthetic")]
+    synthetic_rows = [row for row in plans if row.get("synthetic")]
+    selected = real[:max(1, int(top))]
+    if len(selected) < max(1, int(top)):
+        allowance = max(0, min(len(synthetic_rows), max(1, int(top) // 3),
+                              max(1, int(top)) - len(selected)))
+        selected += synthetic_rows[:allowance]
+    return selected
 
 
 def print_plan(plans: list) -> None:

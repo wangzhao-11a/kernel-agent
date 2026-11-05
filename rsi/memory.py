@@ -583,7 +583,8 @@ class MemoryStore:
         existing = next((r for r in self.skills if r.get("key") == key), None)
         if existing:
             for field in ("template", "template_ref", "parameters", "validation",
-                          "measured", "confidence", "invalidators", "preconditions"):
+                          "measured", "confidence", "invalidators", "preconditions",
+                          "auto_generated", "strategy"):
                 if record.get(field):
                     existing[field] = record[field]
             existing["updated"] = utc_now()
@@ -602,6 +603,8 @@ class MemoryStore:
             "measured": dict(record.get("measured") or {}),
             "confidence": str(record.get("confidence") or "candidate"),
             "invalidators": list(record.get("invalidators") or []),
+            "auto_generated": bool(record.get("auto_generated")),
+            "strategy": str(record.get("strategy") or ""),
             "created": utc_now(),
             "updated": utc_now(),
         }
@@ -726,12 +729,17 @@ class MemoryStore:
 
     # ------------------------------------------------------------------ extraction
     def record_failure_from_result(self, result: dict, features: dict,
-                                   run_id: str, task_id: str = "") -> dict | None:
+                                   run_id: str, task_id: str = "",
+                                   code: str = "", error: str = "") -> dict | None:
         status = str(result.get("status") or "")
         if status in ("pass", "pass_unstable"):
             return None
         stage, signature = "runtime", status
-        minimal = {"task": task_id or (normalize_features(features).get("task") or "")}
+        minimal = {
+            "task": task_id or (normalize_features(features).get("task") or ""),
+            "code": str(code or "")[:4000],
+            "error": str(error or result.get("error") or "")[:1000],
+        }
         if status == "build_error":
             stage = "build"
             signature = _first_error_line((result.get("build") or {}).get("tail") or "") or "build failed"

@@ -376,8 +376,14 @@ def main(argv=None) -> int:
             if passed_ok:
                 mem.resolve_failures(mem_write_features, run_name, "eval pass")
             else:
-                mem.record_failure_from_result(_memory_pseudo(result), mem_write_features,
-                                               run_name, task.name)
+                try:
+                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                        failure_source = fh.read()
+                except OSError:
+                    failure_source = ""
+                mem.record_failure_from_result(
+                    _memory_pseudo(result), mem_write_features, run_name, task.name,
+                    code=failure_source, error=result.get("error") or "")
 
         uses_kernel = bool((result.get("solution_features") or {}).get("uses_triton"))
         if passed_ok and speedup >= best["speedup"]:
