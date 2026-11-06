@@ -153,9 +153,11 @@ def main(argv=None) -> int:
                     help="disable operator memory (facts/failures/skills) for this run")
     ap.add_argument("--no-distill", action="store_true", help="do not update the strategy pool at the end")
     ap.add_argument("--verify-distill", action="store_true", help="replay attempts before distilling")
-    ap.add_argument("--strict-provenance", action="store_true",
-                    help="refuse to update performance evidence when device != claimed hardware "
+    ap.add_argument("--strict-provenance", dest="strict_provenance", action="store_true", default=True,
+                    help="(default) refuse to update performance evidence when device != claimed hardware "
                          "(e.g. CPU mechanics run labelled ascend-910b)")
+    ap.add_argument("--allow-mechanics-evidence", dest="strict_provenance", action="store_false",
+                    help="explicitly allow mechanics-only runs to update evidence under the claimed hardware")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
 
