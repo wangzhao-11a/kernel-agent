@@ -36,7 +36,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from agent import llm as llm_mod  # noqa: E402
-from agent.prompts import build_feedback, build_task_prompt, system_prompt  # noqa: E402
+from agent.prompts import build_ablation_prompt, build_feedback, build_task_prompt, system_prompt  # noqa: E402
 from harness import device as dev  # noqa: E402
 from harness.runner import run_evaluation  # noqa: E402
 from harness.tasks import load_task  # noqa: E402
@@ -44,6 +44,7 @@ from harness.worker import format_summary  # noqa: E402
 from rsi import bottlenecks  # noqa: E402
 from rsi.cards import DEFAULT_KB_ROOT as DEFAULT_CANN_KB_ROOT  # noqa: E402
 from rsi.cards import read_card, render_candidates, retrieve_cards  # noqa: E402
+from rsi.detectors import match as detector_match  # noqa: E402
 from rsi.distill import attribute_from_source, distill_run, expand_declared, resolve_declared  # noqa: E402
 from rsi.exemplars import render_exemplars, retrieve_exemplars  # noqa: E402
 from rsi.features import hardware_from_device, task_features  # noqa: E402
@@ -140,6 +141,9 @@ def main(argv=None) -> int:
                     help="profiling backend fed back into the loop (default torch = cross-platform)")
     ap.add_argument("--profile-every", type=int, default=2,
                     help="auto-profile after every Nth passing iteration (0 = only via the profile action)")
+    ap.add_argument("--ablate-budget", type=int, default=3,
+                    help="max strategies ablated per run (0 disables the ablation phase)")
+    ap.add_argument("--no-ablate", action="store_true", help="skip the ablation phase")
     ap.add_argument("--out-dir", default=os.path.join(ROOT, "runs", "agent"))
     ap.add_argument("--results-file", default=None)
     ap.add_argument("--knowledge-root", default=DEFAULT_KNOWLEDGE_ROOT)
@@ -493,6 +497,100 @@ def main(argv=None) -> int:
             log("system", "target speedup %.2fx reached (best %.3fx) -> stopping" % (target, best["speedup"]))
             break
 
+    # ---------------------------------------------------------------- ablation
+    # Attribution is only evidence when removing the practice makes the result
+    # significantly worse.  The agent generates one ablated variant per strategy
+    # (bounded budget); each variant is measured with the same P1 ABAB pipeline.
+    ablation_results = []
+    if (use_rsi and not args.no_ablate and args.ablate_budget > 0
+            and best.get("status") == "pass" and best.get("path")):
+        try:
+            with open(os.path.join(run_dir, "attempts.jsonl"), encoding="utf-8") as fh:
+                rows = [json.loads(line) for line in fh if line.strip()]
+        except (OSError, ValueError):
+            rows = []
+        best_row = next((row for row in reversed(rows)
+                         if os.path.abspath(str(row.get("solution") or ""))
+                         == os.path.abspath(best["path"])), None)
+        try:
+            with open(best["path"], "r", encoding="utf-8", errors="replace") as fh:
+                best_source = fh.read()
+        except OSError:
+            best_source = ""
+        strategy_ids = list((best_row or {}).get("strategies_used") or [])
+        # Only ablate practices the source actually contains (declared-but-absent
+        # practices are already claimed_only in distillation).
+        strategy_ids = [
+            sid for sid in strategy_ids
+            if not (store.strategies.get(sid) or {}).get("detector")
+            or detector_match((store.strategies.get(sid) or {}).get("detector"), best_source)
+        ][:max(0, int(args.ablate_budget))]
+        if strategy_ids:
+            for sid in strategy_ids:
+                strategy = store.strategies.get(sid) or {"id": sid, "statement": sid}
+                prompt = build_ablation_prompt(task, best_source, strategy)
+                log("user", prompt, meta={"ablation_of": sid})
+                try:
+                    reply = llm_mod.chat(
+                        [{"role": "user", "content": prompt}], system=sys_prompt,
+                        provider=provider, model=model, base_url=base_url, api_key=api_key,
+                        temperature=temperature, max_tokens=args.max_tokens, replay=replayer,
+                    )
+                except llm_mod.LLMError as exc:
+                    log("system", "ablation LLM error: %s" % exc, meta={"ablation_of": sid})
+                    ablation_results.append({"strategy": sid, "status": "ablation_error",
+                                             "error": str(exc)})
+                    continue
+                text = reply.get("text", "")
+                log("assistant", text, meta={"ablation_of": sid})
+                action, err = parse_action(text)
+                content = action.get("content") if (action and not err) else None
+                if not isinstance(content, str) or not content.strip():
+                    ablation_results.append({"strategy": sid, "status": "ablation_invalid",
+                                             "error": err or "no solution content in the reply"})
+                    continue
+                path = os.path.join(run_dir, "ablation_%s.py" % str(sid).replace("/", "_"))
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(content)
+                result = run_evaluation(
+                    task=args.task, solution=path, device=args.device, timeout=args.timeout,
+                    warmup=args.warmup, rep=args.rep, trials=args.trials,
+                    require=args.require or None, run_id=run_name, iteration=iteration,
+                    out_dir=run_dir, results_file=args.results_file, quiet=True,
+                )
+                log("harness", format_summary(result),
+                    meta={"iteration": iteration, "ablation_of": sid})
+                timing = result.get("timing") or {}
+                attempt = {
+                    "iter": "ablation:%s" % sid,
+                    "kind": "ablation",
+                    "ablation_of": sid,
+                    "task": task.name,
+                    "task_file": os.path.abspath(args.task),
+                    "solution": os.path.abspath(path),
+                    "status": result.get("status"),
+                    "speedup": float(timing.get("speedup") or 0.0),
+                    "speedup_ci": timing.get("speedup_ci"),
+                    "n_rounds": timing.get("n_rounds"),
+                    "stability_delta": timing.get("stability_delta"),
+                    "epsilon": timing.get("epsilon"),
+                    "unstable": result.get("status") == "pass_unstable",
+                    "error": result.get("error"),
+                    "solution_source": content,
+                    "strategies_declared": [],
+                    "strategies_used": [],
+                    "distilled": False,
+                }
+                attempts_file.write(json.dumps(attempt, ensure_ascii=False) + "\n")
+                attempts_file.flush()
+                ablation_results.append({
+                    "strategy": sid,
+                    "status": attempt["status"],
+                    "speedup": attempt["speedup"],
+                    "speedup_ci": attempt["speedup_ci"],
+                    "stability_delta": attempt["stability_delta"],
+                })
+
     attempts_file.close()
 
     final_path = None
@@ -532,6 +630,7 @@ def main(argv=None) -> int:
                 "skills": len(mem.skills),
             } if mem else None),
             "nudges": nudge_count,
+            "ablations": ablation_results,
             "trajectory_attempts": None,
             "distill": None,
         },

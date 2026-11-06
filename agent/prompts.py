@@ -117,6 +117,25 @@ def build_task_prompt(task, device: str, max_iters: int, state: str = "No soluti
     )
 
 
+def build_ablation_prompt(task, source: str, strategy: dict) -> str:
+    """Ask the model for the same solution with one practice removed."""
+    return (
+        "## Ablation request\n\n"
+        "Task: %s\n%s\n\n"
+        "Practice to remove/disable: [%s] %s\n\n"
+        "Below is a working solution. Produce a version of it with that practice "
+        "removed or disabled, keeping the rest of the implementation and its "
+        "correctness intact. Do not add new optimizations and do not change the "
+        "entrypoint.\n\n"
+        "```python\n%s\n```\n\n"
+        "Reply with exactly one JSON object:\n"
+        "{\"action\": \"write_solution\", \"content\": \"<full source>\", "
+        "\"strategies\": [], \"expected_speedup\": null}"
+        % (task.name, task.description or "", strategy.get("id") or strategy.get("key") or "?",
+           strategy.get("statement") or "", (source or "").strip())
+    )
+
+
 def build_feedback(iteration: int, status: str, summary: str, speedup: float, best: dict,
                    hints: str = "", profiling: str = "") -> str:
     lines = ["Evaluation result (iteration %d):" % iteration, "```", summary, "```"]

@@ -24,6 +24,8 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from harness.noise import classify, epsilon_for, promotion_floor  # noqa: E402
+from rsi.detectors import code_only as _detector_code_only  # noqa: E402
+from rsi.detectors import match as detector_match  # noqa: E402
 from rsi.exemplars import record_exemplar, update_descendant_gain  # noqa: E402
 from rsi.provenance import provenance  # noqa: E402
 from rsi.store import DEFAULT_ROOT, StrategyStore  # noqa: E402
@@ -92,7 +94,7 @@ def resolve_declared(name: str, store: StrategyStore):
                         score = 25.0 * fuzzy
         if score > best_score:
             best, best_score = sid, score
-    return best if best_score >= 20.0 else None
+    return best if best_score >= 30.0 else None
 
 
 def expand_declared(names, store: StrategyStore) -> list:
@@ -113,15 +115,7 @@ def expand_declared(names, store: StrategyStore) -> list:
 
 def _code_only(source: str) -> str:
     """Strip comments and string literals: attribution must match code, not prose."""
-    try:
-        pieces = []
-        for tok in tokenize.generate_tokens(io.StringIO(source or "").readline):
-            if tok.type in (tokenize.COMMENT, tokenize.STRING):
-                continue
-            pieces.append(tok.string)
-        return " ".join(pieces).lower()
-    except Exception:
-        return (source or "").lower()
+    return _detector_code_only(source)
 
 
 def _usable_keywords(strategy: dict) -> list:
@@ -169,6 +163,7 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
         "combos": [],
         "refined": [],
         "skipped": [],
+        "claimed_only": [],
         "exemplar": None,
         "descendant_gain": [],
     }
@@ -195,10 +190,37 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
     epsilon = epsilon_for(device=traj.get("device"), hardware=hardware)
     run_id = os.path.basename(os.path.abspath(str(run_dir).rstrip("/\\")))
     traj_ref = os.path.relpath(traj_path, ROOT)
+    best_path = os.path.abspath(str(((traj.get("best") or {}).get("path")) or ""))
+    ablations = {}
+    for row in traj.get("attempts", []):
+        if row.get("kind") == "ablation" and row.get("ablation_of"):
+            ablations[str(row["ablation_of"])] = row
     touched = set()
-    best = None  # (attempt, used_ids, speedup, outcome)
+    best = None  # (attempt, used_ids, speedup, outcome, contributions)
+
+    def _ablation_info(sid, full_ci):
+        """(field for the evidence row, whether the removal significantly hurt)."""
+        row = ablations.get(sid)
+        if not row:
+            return {"performed": False, "without_speedup_ci": None}, False
+        without_ci = row.get("speedup_ci")
+        status = row.get("status")
+        performed = bool(status in ("pass", "pass_unstable") and without_ci
+                         and len(without_ci) >= 2)
+        contributed = bool(status == "pass" and full_ci and len(full_ci) >= 2
+                           and float(without_ci[1]) < float(full_ci[0]))
+        return ({
+            "performed": bool(performed),
+            "without_speedup": row.get("speedup"),
+            "without_speedup_ci": without_ci,
+            "status": status,
+            "unstable": status == "pass_unstable",
+            "contributed": contributed,
+        }, contributed)
 
     for attempt in traj.get("attempts", []):
+        if attempt.get("kind") == "ablation":
+            continue
         if attempt.get("distilled") and not force:
             report["skipped"].append({"iter": attempt.get("iter"), "reason": "already distilled"})
             continue
@@ -218,40 +240,84 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
                           % (attempt.get("stability_delta"), eps),
             })
             continue
+        # P2.3: only correctness failures and significant regressions are strategy
+        # failures.  Build/import/JSON/evaluator errors go to failure memory, not
+        # to the strategy statistics.
+        if status not in ("pass", "fail_correctness"):
+            report["skipped"].append({
+                "iter": attempt.get("iter"),
+                "reason": "stage failure (%s): not attributed to strategies" % status,
+            })
+            attempt["distilled"] = True
+            continue
         speedup = float(attempt.get("speedup") or 0.0)
         expected = attempt.get("expected_speedup")
         declared = [str(d) for d in (attempt.get("strategies_declared") or []) if str(d).strip()]
         declared_for_resolution = expand_declared(declared, store)
 
         resolved = [r for r in (resolve_declared(d, store) for d in declared_for_resolution) if r]
-        used = sorted(set(resolved)) or attribute_from_source(attempt.get("solution_source") or "", store, feats)
+        source = attempt.get("solution_source") or ""
+        verified_declared, claimed_only = [], []
+        for sid in resolved:
+            detector = (store.strategies.get(sid) or {}).get("detector")
+            if detector and not detector_match(detector, source):
+                claimed_only.append(sid)
+            else:
+                verified_declared.append(sid)
+        if claimed_only:
+            report["claimed_only"].append({
+                "iter": attempt.get("iter"),
+                "strategies": sorted(set(claimed_only)),
+                "reason": "declared practice not found in the solution source",
+            })
+        if declared:
+            # Declarations are checked; do not fall back to keyword attribution,
+            # otherwise an unverifiable claim would still buy evidence.
+            used = sorted(set(verified_declared))
+        else:
+            used = attribute_from_source(source, store, feats)
+        full_ci = attempt.get("speedup_ci")
         if status != "pass":
             outcome = "failure"
         else:
-            outcome = classify(attempt.get("speedup_ci"), eps)
-
-        if status == "pass" and (best is None or speedup > best[2]):
-            best = (attempt, used, speedup, outcome)
-
+            outcome = classify(full_ci, eps)
+        is_best = bool(best_path and status == "pass"
+                       and os.path.abspath(str(attempt.get("solution") or "")) == best_path)
+        contributions = {}
         for sid in used:
-            store.record_evidence(sid, traj_ref, traj.get("task") or "", speedup if status == "pass" else 0.0,
-                                  outcome, expected_speedup=expected, hardware=hardware, dtype=dtype,
-                                  run_id=run_id, holdout_ok=attempt.get("holdout_ok"),
+            if is_best:
+                ablation, contributed = _ablation_info(sid, full_ci)
+            else:
+                # Only the best solution was ablated; other attempts cannot claim
+                # a strategy success without their own ablation.
+                ablation, contributed = {"performed": False, "without_speedup_ci": None}, False
+            sid_outcome = "neutral" if (outcome == "success" and not contributed) else outcome
+            contributions[sid] = contributed
+            store.record_evidence(sid, traj_ref, traj.get("task") or "",
+                                  speedup if status == "pass" else 0.0,
+                                  sid_outcome, expected_speedup=expected, hardware=hardware,
+                                  dtype=dtype, run_id=run_id, ablation=ablation,
+                                  holdout_ok=attempt.get("holdout_ok"),
                                   shape_signature=attempt.get("shape_signature"))
             touched.add(sid)
             report["evidence"].append({"strategy": sid, "iter": attempt.get("iter"),
-                                       "outcome": outcome, "measured_speedup": speedup,
+                                       "outcome": sid_outcome, "measured_speedup": speedup,
                                        "expected_speedup": expected,
-                                       "speedup_ci": attempt.get("speedup_ci"),
+                                       "speedup_ci": full_ci,
                                        "holdout_ok": attempt.get("holdout_ok"),
-                                       "shape_signature": attempt.get("shape_signature")})
+                                       "shape_signature": attempt.get("shape_signature"),
+                                       "ablation": ablation})
+
+        if is_best and (best is None or speedup > best[2]):
+            best = (attempt, used, speedup, outcome, contributions)
 
         # Promote agent-declared practices we cannot resolve yet (only when the
-        # new strategy clears the stricter 1 + 2*epsilon promotion floor).
+        # new strategy clears the stricter 1 + 2*epsilon promotion floor).  It is
+        # a candidate: without an ablation it cannot claim a success yet.
         promote_floor = promotion_floor(eps)
         if (status == "pass" and promote_floor is not None
-                and attempt.get("speedup_ci")
-                and float(attempt["speedup_ci"][0]) > promote_floor):
+                and full_ci
+                and float(full_ci[0]) > promote_floor):
             for name in declared_for_resolution:
                 if resolve_declared(name, store) is None:
                     st = store.upsert(
@@ -259,24 +325,35 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
                         op_class=[feats["op_class"]] if feats.get("op_class") else [],
                         keywords=[name], expected=speedup, source="agent-declared", confidence="candidate",
                     )
-                    store.record_evidence(st["id"], traj_ref, traj.get("task") or "", speedup, outcome,
-                                          expected_speedup=expected, hardware=hardware, dtype=dtype,
-                                          run_id=run_id)
+                    store.record_evidence(
+                        st["id"], traj_ref, traj.get("task") or "", speedup, "neutral",
+                        expected_speedup=expected, hardware=hardware, dtype=dtype,
+                        run_id=run_id, ablation={"performed": False, "without_speedup_ci": None})
                     touched.add(st["id"])
                     report["created"].append({"strategy": st["id"], "statement": st["statement"]})
 
         attempt["distilled"] = True
 
-    if best and len(best[1]) >= 2:
-        combo = store.upsert_combo(best[1], measured_speedup=best[2],
-                                   task=traj.get("task") or "", trajectory=traj_ref)
-        report["combos"].append({"combo": combo["id"], "members": combo["members"],
-                                 "best_speedup": (combo.get("stats") or {}).get("best_speedup")})
+    if best and best[3] == "success" and len(best[1]) >= 2:
+        contributions = best[4]
+        missing = [sid for sid in best[1] if not contributions.get(sid)]
+        if missing:
+            report["skipped"].append({
+                "iter": "combo",
+                "reason": "members without ablation evidence: %s" % ", ".join(missing),
+            })
+        else:
+            combo = store.upsert_combo(best[1], measured_speedup=best[2],
+                                       task=traj.get("task") or "", trajectory=traj_ref,
+                                       contributions=contributions)
+            report["combos"].append({"combo": combo["id"], "members": combo["members"],
+                                     "contributions": combo.get("contributions"),
+                                     "best_speedup": (combo.get("stats") or {}).get("best_speedup")})
 
     # code exemplar: only a statistically significant win is a winning example
     if (best and best[2] >= 1.0 and best[3] == "success"
             and (best[0].get("solution_source") or "").strip()):
-        attempt, used_ids, speedup, _outcome = best
+        attempt, used_ids, speedup, _outcome, _contributions = best
         profile_top = [str(row.get("op")) for row in ((attempt.get("profile") or {}).get("top_ops") or [])][:3]
         row = record_exemplar(
             store.root, traj.get("task") or "", attempt["solution_source"], speedup,
@@ -340,9 +417,11 @@ def main(argv=None) -> int:
         print("[%s] task=%s hardware=%s device_class=%s valid_evidence=%s replay_ok=%s" % (
             os.path.basename(run_dir.rstrip("/\\")), report["task"], report["hardware"],
             prov.get("device_class"), prov.get("valid"), report["replay_ok"]))
-        print("  evidence: %d | created: %d | combos: %d | refined: %d | skipped: %d" % (
+        print("  evidence: %d | created: %d | combos: %d | refined: %d | skipped: %d | claimed_only: %d" % (
             len(report["evidence"]), len(report["created"]), len(report["combos"]),
-            len(report["refined"]), len(report["skipped"])))
+            len(report["refined"]), len(report["skipped"]), len(report["claimed_only"])))
+        for row in report["claimed_only"][:3]:
+            print("    claimed-only iter=%s: %s" % (row.get("iter"), ", ".join(row.get("strategies") or [])))
         for row in report["skipped"][:3]:
             print("    skipped iter=%s: %s" % (row.get("iter"), row.get("reason")))
         for row in report["evidence"][:6]:

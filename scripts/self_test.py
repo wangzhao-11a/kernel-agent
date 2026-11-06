@@ -115,6 +115,30 @@ OPBASE_TEMPLATE = textwrap.dedent('''
 
 RESULTS = {"pass": [], "fail": []}
 
+P2_TASK = textwrap.dedent('''
+    """Deliberately slow reference so a torch.softmax solution is a real win."""
+    import torch
+
+    TASK = {
+        "name": "p2_softmax_slow_ref",
+        "level": 1,
+        "description": "Row-wise softmax with a slow reference (P2 ablation self-test).",
+        "tolerance": {"atol": 1e-5, "rtol": 1e-5},
+        "num_trials": 2,
+        "warmup": 5,
+        "rep": 100,
+        "input_specs": [{"kind": "randn", "shape": [2048, 4096], "dtype": "float32"}],
+        "entrypoint": "run",
+        "baseline": "eager",
+        "tags": ["softmax", "reduction", "memory-bound"],
+    }
+
+    def reference(x):
+        m = x.max(dim=-1, keepdim=True).values
+        e = torch.exp(x - m)
+        return e / e.sum(dim=-1, keepdim=True)
+''')
+
 
 def check(name, fn):
     try:
@@ -370,26 +394,42 @@ def check_noise_config(tmp):
 
 
 def check_distill_gate(tmp):
-    """P1.3: only a CI lower bound above 1 + epsilon is recorded as a success."""
+    """P1.3 + P2.2: a CI success counts only with a supporting ablation."""
     from rsi.distill import distill_run
     from rsi.store import StrategyStore
 
     run_dir = os.path.join(tmp, "gate_run")
+    source = "\n".join([
+        "import torch",
+        "",
+        "",
+        "def run(x):",
+        "    m = x.max(dim=-1, keepdim=True).values",
+        "    e = torch.exp(x - m)",
+        "    return e / e.sum(dim=-1, keepdim=True)",
+    ]) + "\n"
+    fast_path = write(os.path.join(run_dir, "fast.py"), source)
+    neutral_path = write(os.path.join(run_dir, "neutral.py"), source)
     meta = {
         "task": "np_softmax", "device": "cpu", "hardware": "cpu",
         "features": {"tags": ["softmax", "reduction"], "op_class": "reduction",
                      "dtypes": ["float32"]},
-        "best": {"status": "pass", "speedup": 1.5},
+        "best": {"status": "pass", "speedup": 1.5, "path": fast_path},
     }
     write(os.path.join(run_dir, "meta.json"), json.dumps(meta))
-    base = {"strategies_declared": ["online softmax"], "solution_source": "def run(x):\n    return x\n",
+    base = {"strategies_declared": ["online softmax"], "solution_source": source,
             "stability_delta": 0.01, "distilled": False}
     traj = {
         "task": "np_softmax", "task_file": "", "hardware": "cpu", "device": "cpu",
-        "features": meta["features"], "distilled": False,
+        "features": meta["features"], "best": meta["best"], "distilled": False,
         "attempts": [
-            dict(base, iter=1, status="pass", speedup=1.5, speedup_ci=[1.45, 1.55]),
-            dict(base, iter=2, status="pass", speedup=1.0, speedup_ci=[0.98, 1.02]),
+            dict(base, iter=1, status="pass", speedup=1.5, speedup_ci=[1.45, 1.55],
+                 solution=fast_path),
+            dict(base, iter=2, status="pass", speedup=1.0, speedup_ci=[0.98, 1.02],
+                 solution=neutral_path),
+            {"iter": "ablation:stg-0001", "kind": "ablation", "ablation_of": "stg-0001",
+             "status": "pass", "speedup": 0.55, "speedup_ci": [0.50, 0.60],
+             "solution_source": source, "distilled": False},
         ],
     }
     write(os.path.join(run_dir, "trajectory.json"), json.dumps(traj))
@@ -399,9 +439,10 @@ def check_distill_gate(tmp):
     assert "success" in outcomes, report["evidence"]
     assert "neutral" in outcomes, report["evidence"]
     assert "failure" not in outcomes, report["evidence"]
+    success = next(row for row in report["evidence"] if row["outcome"] == "success")
+    assert success["ablation"].get("without_speedup_ci") == [0.5, 0.6], success
     st = store.find_by_key("online_softmax")
     assert st["confidence"] == "candidate", st["confidence"]
-
 
 def check_unstable_skipped(tmp):
     from rsi.distill import distill_run
@@ -438,14 +479,29 @@ def check_rsi_loop_distill(tmp):
     # unstable on a CPU (the P1 stability gate would skip it); the softmax
     # task is long enough for the gate to be meaningful.
     task_path = os.path.join(ROOT, "tasks", "level1", "softmax.py")
-    wrong = "import torch\n\n\ndef run(x):\n    return x * 2.0\n"
-    good = "import torch\n\n\ndef run(x):\n    return torch.softmax(x, dim=-1)\n"
+    wrong = "\n".join([
+        "import torch",
+        "",
+        "",
+        "def run(x):",
+        "    m = torch.max(x, dim=-1, keepdim=True).values",
+        "    return torch.exp(x - m)",
+    ]) + "\n"
+    good = "\n".join([
+        "import torch",
+        "",
+        "",
+        "def run(x):",
+        "    m = x.max(dim=-1, keepdim=True).values",
+        "    e = torch.exp(x - m)",
+        "    return e / e.sum(dim=-1, keepdim=True)",
+    ]) + "\n"
     replay = write(os.path.join(tmp, "rsi_replay.json"), json.dumps({
         "responses": [
             {"action": "write_solution", "content": wrong,
              "strategies": ["online softmax"], "expected_speedup": 1.3},
             {"action": "write_solution", "content": good,
-             "strategies": ["online softmax", "multi-core split"], "expected_speedup": 1.0},
+             "strategies": ["online softmax"], "expected_speedup": 1.0},
             {"action": "finish", "summary": "rsi self-test"},
         ]
     }, ensure_ascii=False))
@@ -461,6 +517,7 @@ def check_rsi_loop_distill(tmp):
         # mechanics test: this run only exercises distillation, not performance
         # evidence, so it must opt in explicitly (strict provenance is the default).
         "--allow-mechanics-evidence",
+        "--no-ablate",
     ]
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=600)
@@ -511,9 +568,9 @@ def check_rsi_loop_distill(tmp):
         assert st is not None and st["stats"]["applied"] >= 1, st
         assert st["stats"]["calibration_mae"] is not None, st["stats"]
         assert any(str(e["trajectory"]).endswith("trajectory.json") for e in st["evidence"]), st["evidence"]
-        assert store.combos, "expected a combination rule from the 2-practice attempt"
-        combo = list(store.combos.values())[0]
-        assert len(combo["members"]) >= 2, combo
+        # P2.4: a single attributed practice cannot form a combo, and a
+        # combo without ablation evidence is not created at all.
+        assert not store.combos, "combo created without ablation evidence"
 
     before = {k: v["stats"]["applied"] for k, v in store.strategies.items()}
     report = distill_run(run_dir, store=store, strict_provenance=False)
@@ -524,7 +581,15 @@ def check_rsi_loop_distill(tmp):
 def check_strict_provenance(tmp):
     """A CPU mechanics run labelled ascend-910b must not write performance evidence."""
     task_path = os.path.join(ROOT, "tasks", "level1", "softmax.py")
-    good = "import torch\n\n\ndef run(x):\n    return torch.softmax(x, dim=-1)\n"
+    good = "\n".join([
+        "import torch",
+        "",
+        "",
+        "def run(x):",
+        "    m = x.max(dim=-1, keepdim=True).values",
+        "    e = torch.exp(x - m)",
+        "    return e / e.sum(dim=-1, keepdim=True)",
+    ]) + "\n"
     replay = write(os.path.join(tmp, "prov_replay.json"), json.dumps({
         "responses": [
             {"action": "write_solution", "content": good,
@@ -542,7 +607,7 @@ def check_strict_provenance(tmp):
             "--knowledge-root", root, "--out-dir", out_dir,
             "--results-file", os.path.join(tmp, name + "_results.jsonl"),
             "--max-iters", "4", "--target-speedup", "0.5", "--timeout", "180",
-            "--profiler", "off",
+            "--profiler", "off", "--no-ablate",
         ] + list(extra)
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=600)
@@ -572,6 +637,13 @@ def check_strict_provenance(tmp):
     # (and is then skipped regardless of provenance), so the provenance switch
     # itself is verified deterministically at the distill layer.
     def synth_run(name):
+        source = "\n".join([
+            "import torch", "", "",
+            "def run(x):",
+            "    m = x.max(dim=-1, keepdim=True).values",
+            "    e = torch.exp(x - m)",
+            "    return e / e.sum(dim=-1, keepdim=True)",
+        ]) + "\n"
         run_dir = os.path.join(tmp, name)
         meta = {"task": "softmax", "device": "cpu", "hardware": "ascend-910b",
                 "features": {"tags": ["softmax"], "op_class": "reduction",
@@ -584,7 +656,7 @@ def check_strict_provenance(tmp):
                     "iter": 1, "status": "pass", "speedup": 1.0,
                     "speedup_ci": [0.99, 1.01], "stability_delta": 0.01,
                     "strategies_declared": ["online softmax"],
-                    "solution_source": "def run(x):\n    return x\n", "distilled": False,
+                    "solution_source": source, "distilled": False,
                 }]}
         write(os.path.join(run_dir, "trajectory.json"), json.dumps(traj))
         return run_dir
@@ -630,7 +702,7 @@ def check_p3_holdout_measurement(tmp):
         import torch
         TASK = {"name": "p3_slow_ref", "level": 1,
                 "tolerance": {"atol": 1e-5, "rtol": 1e-5},
-                "num_trials": 2, "warmup": 5, "rep": 30,
+                "num_trials": 2, "warmup": 5, "rep": 100,
                 "input_specs": [{"kind": "randn", "shape": [2048, 4096], "dtype": "float32"}],
                 "entrypoint": "run", "baseline": "eager", "tags": ["softmax", "reduction"]}
         def reference(x):
@@ -745,6 +817,156 @@ def check_p3_evolve_holdout(tmp):
 
     assert holdout_label("softmax") == "holdout-1024x4096", holdout_label("softmax")
     assert holdout_label("no_such_task") == "shape-x0.5"
+def _p2_sources():
+    full = """import torch
+
+
+def run(x):
+    return torch.softmax(x, dim=-1)
+"""
+    ablated = """import torch
+
+
+def run(x):
+    m = x.max(dim=-1, keepdim=True).values
+    e = torch.exp(x - m)
+    for _ in range(3):
+        e = e.clone()
+    return e / e.sum(dim=-1, keepdim=True)
+"""
+    return full, ablated
+
+
+def _seed_p2_store(root):
+    from rsi.store import StrategyStore
+
+    store = StrategyStore(root)
+    store.upsert(statement="use torch fused softmax", key="fused_softmax",
+                 tags=["softmax", "reduction"], op_class=["reduction"],
+                 keywords=["fused softmax"], expected=2.0,
+                 detector={"kind": "regex", "any": [r"\bsoftmax\s*\("]})
+    store.upsert(statement="keep tensors on device", key="device_resident",
+                 tags=["softmax", "reduction"], op_class=["reduction"],
+                 keywords=["device resident"], expected=1.2,
+                 detector={"kind": "regex", "any": [r"\btorch\b"]})
+    store.save()
+    return store
+
+
+def _run_p2_loop(tmp, name, task_path, replay_obj, extra=()):
+    replay = write(os.path.join(tmp, name + "_replay.json"),
+                   json.dumps(replay_obj, ensure_ascii=False))
+    out_dir = os.path.join(tmp, name + "_runs")
+    root = os.path.join(tmp, name + "_kb")
+    cmd = [
+        sys.executable, "-m", "agent.loop", "--task", task_path, "--provider", "replay",
+        "--replay-file", replay, "--device", "cpu",
+        "--knowledge-root", root, "--out-dir", out_dir,
+        "--results-file", os.path.join(tmp, name + "_results.jsonl"),
+        "--max-iters", "3", "--target-speedup", "0.5", "--timeout", "300",
+        "--profiler", "off",
+    ] + list(extra)
+    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=900)
+    assert proc.returncode == 0, (proc.stdout[-2000:] + "\n" + proc.stderr[-2000:])
+    metas = glob.glob(os.path.join(out_dir, "*", "meta.json"))
+    assert len(metas) == 1, metas
+    run_dir = os.path.dirname(metas[0])
+    with open(metas[0], encoding="utf-8") as fh:
+        meta = json.load(fh)
+    report = {}
+    path = os.path.join(run_dir, "distill_report.json")
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as fh:
+            report = json.load(fh)
+    return run_dir, root, meta, report
+
+
+def check_p2_claimed_only(tmp):
+    """P2.1: declaring online_softmax on a direct torch.softmax gains no evidence."""
+    from rsi.store import StrategyStore
+
+    task_path = write(os.path.join(tmp, "p2_tasks", "slow.py"), P2_TASK)
+    full, _ablated = _p2_sources()
+    replay = {"responses": [
+        {"action": "write_solution", "content": full,
+         "strategies": ["online softmax"], "expected_speedup": 3.0},
+        {"action": "finish", "summary": "claimed-only self-test"},
+    ]}
+    _run_dir, root, _meta, report = _run_p2_loop(
+        tmp, "p2_claimed", task_path, replay, ["--no-ablate"])
+    store = StrategyStore(root)
+    sid = store.find_by_key("online_softmax")["id"]
+    assert not report.get("evidence"), report
+    claimed = [row for row in (report.get("claimed_only") or []) if sid in row.get("strategies", [])]
+    assert claimed, report.get("claimed_only")
+    assert not store.find_by_key("online_softmax")["evidence"], "claimed-only practice got evidence"
+
+
+def check_p2_ablation_end_to_end(tmp):
+    """P2.2 + P2.4: ablation evidence is required for success and for combos."""
+    from rsi.store import StrategyStore
+
+    task_path = write(os.path.join(tmp, "p2_tasks", "slow_abl.py"), P2_TASK)
+    root = os.path.join(tmp, "p2_abl_kb")
+    store = _seed_p2_store(root)
+    full, ablated = _p2_sources()
+    replay = {"responses": [
+        {"action": "write_solution", "content": full,
+         "strategies": ["fused softmax", "device resident"], "expected_speedup": 3.0},
+        {"action": "write_solution", "content": ablated, "strategies": [],
+         "expected_speedup": 1.0},
+        {"action": "write_solution", "content": ablated, "strategies": [],
+         "expected_speedup": 1.0},
+        {"action": "finish", "summary": "ablation self-test"},
+    ]}
+    _run_dir, root, meta, report = _run_p2_loop(
+        tmp, "p2_abl", task_path, replay, ["--ablate-budget", "2"])
+    ablations = meta["rsi"]["ablations"]
+    assert len(ablations) == 2, ablations
+    assert all(row.get("speedup_ci") for row in ablations), ablations
+    sids = [store.find_by_key("fused_softmax")["id"], store.find_by_key("device_resident")["id"]]
+    rows = {row["strategy"]: row for row in report.get("evidence") or []}
+    for sid in sids:
+        row = rows.get(sid)
+        assert row is not None, report
+        assert row["outcome"] == "success", row
+        assert row["ablation"]["performed"] is True, row
+        assert row["ablation"]["without_speedup_ci"], row
+        assert row["ablation"]["contributed"] is True, row
+    combos = [json.loads(line) for line in open(os.path.join(root, "combos.jsonl"), encoding="utf-8")
+              if line.strip()]
+    assert len(combos) == 1, combos
+    assert set(combos[0]["members"]) == set(sids), combos
+    assert all(combos[0]["contributions"].get(sid) for sid in sids), combos
+
+
+def check_p2_stage_failure(tmp):
+    """P2.3: a syntax error is failure memory, not a strategy failure."""
+    from rsi.store import StrategyStore
+
+    task_path = write(os.path.join(tmp, "p2_tasks", "slow_stage.py"), P2_TASK)
+    _full, good = _p2_sources()
+    bad = """import torch
+
+
+def run(x):
+    return (
+"""
+    replay = {"responses": [
+        {"action": "write_solution", "content": bad,
+         "strategies": ["online softmax"], "expected_speedup": 2.0},
+        {"action": "write_solution", "content": good,
+         "strategies": ["online softmax"], "expected_speedup": 1.0},
+        {"action": "finish", "summary": "stage failure self-test"},
+    ]}
+    _run_dir, root, _meta, report = _run_p2_loop(
+        tmp, "p2_stage", task_path, replay, ["--no-ablate"])
+    store = StrategyStore(root)
+    st = store.find_by_key("online_softmax")
+    assert st["stats"]["failed"] == 0, st["stats"]
+    assert any("stage failure (import_error)" in row.get("reason", "")
+               for row in report.get("skipped") or []), report.get("skipped")
 
 
 def check_adversarial_solutions(tmp):
@@ -809,6 +1031,8 @@ def check_rsi_attribution_precision(tmp):
     assert resolve_declared("multi-core split", store) == store.find_by_key("multi_core_split")["id"]
     assert resolve_declared("MLA absorption", store) == store.find_by_key("mla_absorption")["id"]
     assert resolve_declared("completely unknown practice xyz", store) is None
+    # threshold is 30: a 0.6 token overlap (24) is below the bar now
+    assert resolve_declared("fold scaling producer zzz yyy", store) is None
 
     feats = {"tags": ["attention", "mla", "compute-bound", "fp32"], "op_class": "attention",
              "dtypes": ["float32"]}
@@ -1209,6 +1433,9 @@ def main():
         check("rsi: loop records trajectory, distills, reuses priors", lambda: check_rsi_loop_distill(tmp))
         check("rsi: strict provenance blocks CPU evidence for ascend-910b", lambda: check_strict_provenance(tmp))
         check("p3: holdout measurement rejects train-only gains", lambda: check_p3_holdout_measurement(tmp))
+        check("p2: claimed-only declarations gain no evidence", lambda: check_p2_claimed_only(tmp))
+        check("p2: ablation evidence gates success and combos", lambda: check_p2_ablation_end_to_end(tmp))
+        check("p2: syntax errors do not count as strategy failures", lambda: check_p2_stage_failure(tmp))
         check("adversarial: cheat regression set (cache/patch/side-stream/view/reference)",
           lambda: check_adversarial_solutions(tmp))
         check("real-world tasks: example solutions pass on CPU",
