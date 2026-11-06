@@ -390,7 +390,22 @@ def main(argv=None) -> int:
                     code=failure_source, error=result.get("error") or "")
 
         uses_kernel = bool((result.get("solution_features") or {}).get("uses_triton"))
-        if passed_ok and speedup >= best["speedup"]:
+
+        def _beats(candidate_status, candidate_speedup, current: dict) -> bool:
+            """Stable passes outrank unstable ones: only stable results can feed
+            distillation (P1.5), so the best solution must be the stable one when
+            both exist."""
+            if current.get("status") is None:
+                return True
+            if candidate_status == current.get("status"):
+                return candidate_speedup >= current.get("speedup", 0.0)
+            if candidate_status == "pass" and current.get("status") == "pass_unstable":
+                return True
+            if candidate_status == "pass_unstable" and current.get("status") == "pass":
+                return False
+            return candidate_speedup >= current.get("speedup", 0.0)
+
+        if passed_ok and _beats(status, speedup, best):
             best.update(status=status, speedup=speedup, path=path, uses_triton=uses_kernel)
         elif best["status"] is None:
             best.update(status=status, speedup=speedup, path=path, uses_triton=uses_kernel)
