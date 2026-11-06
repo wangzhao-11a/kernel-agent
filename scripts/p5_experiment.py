@@ -94,7 +94,7 @@ def _scheduler_cmd(args, out_dir: str, train_root: str, knowledge_root: str,
         sys.executable, "-m", "rsi.schedule", "--budget-iters", str(int(budget)),
         "--approve", "auto", "--top", str(max(1, len(args.train_tasks))),
         "--seeds", str(args.train_seeds), "--variants", "base",
-        "--max-iters", str(args.max_iters), "--target-speedup", str(args.target_speedup),
+        "--max-iters", str(args.train_max_iters), "--target-speedup", str(args.target_speedup),
         "--provider", args.provider, "--model", args.model, "--base-url", args.base_url,
         "--api-key-env", args.api_key_env, "--device", args.device,
         "--timeout", str(args.timeout), "--knowledge-root", knowledge_root,
@@ -380,6 +380,8 @@ def main(argv=None) -> int:
     ap.add_argument("--train-seeds", type=int, default=1,
                     help="seeds per training task (coverage-first default)")
     ap.add_argument("--max-iters", type=int, default=8)
+    ap.add_argument("--train-max-iters", type=int, default=None,
+                    help="iterations per training run (default: --max-iters)")
     ap.add_argument("--target-speedup", type=float, default=5.0)
     ap.add_argument("--train-budget", type=int, default=24)
     ap.add_argument("--stages", type=int, default=1)
@@ -393,6 +395,7 @@ def main(argv=None) -> int:
     ap.add_argument("--pilot", action="store_true",
                     help="smaller sample; mark the report as a pilot")
     args = ap.parse_args(argv)
+    args.train_max_iters = args.train_max_iters or args.max_iters
     args.holdout_tasks = [x.strip() for x in str(args.holdout).split(",") if x.strip()]
     args.train_tasks = [x.strip() for x in str(args.train_tasks).split(",") if x.strip()]
 
