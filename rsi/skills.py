@@ -284,7 +284,7 @@ def main(argv=None) -> int:
         result = validate_skill(store, args.name, _scope_from_args(args), args.command,
                                 _parse_values(args.value), args.workdir)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0 if result.get("status") == "pass" else 1
+        return 0 if result.get("status") in ("pass", "pass_unstable") else 1
 
     if args.cmd == "list":
         for row in sorted(store.skills, key=lambda r: r.get("id", "")):

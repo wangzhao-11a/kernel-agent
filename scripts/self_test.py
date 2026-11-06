@@ -66,39 +66,6 @@ MSPROF_CSV = textwrap.dedent('''\
     FlashAttentionScore,119.5,109.0
 ''')
 
-NP_SOFTMAX_TASK = textwrap.dedent('''
-    """Minimal numpy softmax task used by the RSI self-test."""
-    import numpy as np
-
-    TASK = {
-        "name": "np_softmax",
-        "level": 0,
-        "description": "Row-wise softmax over the last dim, numpy backend (512, 512).",
-        "tolerance": {"atol": 1e-6, "rtol": 1e-6},
-        "num_trials": 2,
-        "warmup": 3,
-        "rep": 20,
-        "tags": ["softmax", "reduction", "memory-bound"],
-    }
-
-    def make_inputs(device, trial):
-        rng = np.random.default_rng(7 + trial)
-        return (rng.standard_normal((512, 512)).astype(np.float32) * 2.0,)
-
-    def reference(x):
-        e = np.exp(x - x.max(axis=-1, keepdims=True))
-        return e / e.sum(axis=-1, keepdims=True)
-''')
-
-NP_SOFTMAX_GOOD = (
-    "import numpy as np\n\n\n"
-    "def run(x):\n"
-    "    m = x.max(axis=-1, keepdims=True)\n"
-    "    e = np.exp(x - m)\n"
-    "    return e / e.sum(axis=-1, keepdims=True)\n"
-)
-NP_SOFTMAX_WRONG = "import numpy as np\n\n\ndef run(x):\n    return x * 2.0\n"
-
 REQ_TASK_SOURCE = textwrap.dedent('''
     """numpy task with a harness-enforced requirement (self-test only)."""
     import numpy as np
@@ -214,9 +181,14 @@ def check_msprof(tmp):
 
 def check_pipeline_pass(tmp, files):
     res = run_task(tmp, files, files["good"])
-    assert res["status"] == "pass", res.get("error")
+    assert res["status"] in ("pass", "pass_unstable"), res.get("error")
     assert res["correctness"]["ok"] is True
     assert res["timing"]["speedup"] > 0, res["timing"]
+    timing = res["timing"]
+    assert timing["n_rounds"] == 5, timing
+    assert len(timing["speedup_ci"]) == 2, timing
+    assert len(timing["rounds"]) == 5, timing
+    assert timing["speedup_ci"][0] <= timing["speedup"] <= timing["speedup_ci"][1], timing
 
 
 def check_pipeline_wrong(tmp, files):
@@ -271,7 +243,7 @@ def check_agent_replay(tmp, files):
     run_dir = os.path.dirname(metas[0])
     with open(metas[0], encoding="utf-8") as fh:
         meta = json.load(fh)
-    assert meta["best"]["status"] == "pass", meta
+    assert meta["best"]["status"] in ("pass", "pass_unstable"), meta
     final = os.path.join(run_dir, "final_solution.py")
     assert os.path.isfile(final), run_dir
     with open(final, encoding="utf-8") as fh:
@@ -287,7 +259,7 @@ def check_torch_examples(tmp):
     common = dict(device="cpu", timeout=600, out_dir=os.path.join(tmp, "torch_out"),
                   results_file=os.path.join(tmp, "torch_results.jsonl"), quiet=True)
     good = run_evaluation(task=task, solution=os.path.join(ROOT, "solutions", "examples", "vector_add_good.py"), **common)
-    assert good["status"] == "pass", good.get("error")
+    assert good["status"] in ("pass", "pass_unstable"), good.get("error")
     wrong = run_evaluation(task=task, solution=os.path.join(ROOT, "solutions", "examples", "vector_add_wrong.py"), **common)
     assert wrong["status"] == "fail_correctness", wrong.get("status")
 
@@ -301,7 +273,7 @@ def check_torch_softmax(tmp):
         device="cpu", timeout=600, out_dir=os.path.join(tmp, "torch_out"),
         results_file=os.path.join(tmp, "torch_results.jsonl"), quiet=True,
     )
-    assert res["status"] == "pass", res.get("error")
+    assert res["status"] in ("pass", "pass_unstable"), res.get("error")
 
 
 def check_rsi_store_and_retrieve(tmp):
@@ -343,16 +315,136 @@ def check_rsi_condition_refinement(tmp):
     note = store.refine_conditions(st["id"])
     assert note and "ascend-910b" in note, note
     assert st["conditions"]["hardware"] == ["ascend-910b"], st["conditions"]
-    assert st["confidence"] in ("seed", "verified"), st["confidence"]
+    # P1.4: one successful run is not a reproduction -- it stays a candidate.
+    assert st["confidence"] == "candidate", st["confidence"]
+
+
+def check_verified_two_runs(tmp):
+    from rsi.store import StrategyStore
+
+    store = StrategyStore(os.path.join(tmp, "verify_kb"))
+    st = store.find_by_key("block_tiling")
+    store.record_evidence(st["id"], "runs/a/trajectory.json", "t", 1.4, "success", run_id="run_a")
+    assert st["confidence"] == "candidate", st["confidence"]
+    store.record_evidence(st["id"], "runs/a/trajectory.json", "t", 1.4, "success", run_id="run_a")
+    assert st["confidence"] == "candidate", "the same run must not verify a strategy"
+    store.record_evidence(st["id"], "runs/b/trajectory.json", "t", 1.4, "success", run_id="run_b")
+    assert st["confidence"] == "verified", st["confidence"]
+
+
+def check_statistical_gate(tmp):
+    from harness import noise, stats
+
+    assert stats.percentile([0.0, 10.0], 50) == 5.0, stats.percentile([0.0, 10.0], 50)
+    assert stats.percentile([], 50) is None
+    lo, hi = stats.bootstrap_ci([1.0, 1.1, 0.9, 1.05, 1.0])
+    assert lo <= 1.0 <= hi, (lo, hi)
+
+    assert noise.classify([1.20, 1.30], 0.05) == "success"
+    assert noise.classify([0.70, 0.80], 0.05) == "regression"
+    assert noise.classify([0.98, 1.03], 0.05) == "neutral"
+    assert noise.classify(None, 0.05) == "neutral"
+    assert noise.classify([1.20, 1.30], None) == "neutral"
+    assert noise.promotion_floor(0.05) == 1.1
+
+    path = write(os.path.join(tmp, "noise.json"), json.dumps({
+        "schema_version": 1, "devices": {"cpu": {"epsilon": 0.07}}}))
+    assert noise.epsilon_for(device="cpu", path=path) == 0.07
+    assert noise.epsilon_for(device="npu", path=path) is None
+    # the actual measurement device wins over a claimed hardware label
+    assert noise.device_key(device="cpu", hardware="ascend-910b") == "cpu"
+    assert noise.device_key(device="npu", hardware="cpu") == "ascend-910b"
+
+
+def check_noise_config(tmp):
+    from harness import noise
+
+    data = noise.load_noise()
+    devices = data.get("devices") or {}
+    for key in ("cpu", "ascend-910b"):
+        entry = devices.get(key) or {}
+        assert entry.get("epsilon") is not None and float(entry["epsilon"]) > 0, (key, entry)
+        assert int(entry.get("n_runs") or 0) >= 20, (key, entry)
+        validation = entry.get("validation") or {}
+        assert int(validation.get("success_count", 99)) <= 1, (key, validation)
+
+
+def check_distill_gate(tmp):
+    """P1.3: only a CI lower bound above 1 + epsilon is recorded as a success."""
+    from rsi.distill import distill_run
+    from rsi.store import StrategyStore
+
+    run_dir = os.path.join(tmp, "gate_run")
+    meta = {
+        "task": "np_softmax", "device": "cpu", "hardware": "cpu",
+        "features": {"tags": ["softmax", "reduction"], "op_class": "reduction",
+                     "dtypes": ["float32"]},
+        "best": {"status": "pass", "speedup": 1.5},
+    }
+    write(os.path.join(run_dir, "meta.json"), json.dumps(meta))
+    base = {"strategies_declared": ["online softmax"], "solution_source": "def run(x):\n    return x\n",
+            "stability_delta": 0.01, "distilled": False}
+    traj = {
+        "task": "np_softmax", "task_file": "", "hardware": "cpu", "device": "cpu",
+        "features": meta["features"], "distilled": False,
+        "attempts": [
+            dict(base, iter=1, status="pass", speedup=1.5, speedup_ci=[1.45, 1.55]),
+            dict(base, iter=2, status="pass", speedup=1.0, speedup_ci=[0.98, 1.02]),
+        ],
+    }
+    write(os.path.join(run_dir, "trajectory.json"), json.dumps(traj))
+    store = StrategyStore(os.path.join(tmp, "gate_kb"))
+    report = distill_run(run_dir, store=store)
+    outcomes = [row["outcome"] for row in report["evidence"]]
+    assert "success" in outcomes, report["evidence"]
+    assert "neutral" in outcomes, report["evidence"]
+    assert "failure" not in outcomes, report["evidence"]
+    st = store.find_by_key("online_softmax")
+    assert st["confidence"] == "candidate", st["confidence"]
+
+
+def check_unstable_skipped(tmp):
+    from rsi.distill import distill_run
+    from rsi.store import StrategyStore
+
+    run_dir = os.path.join(tmp, "unstable_run")
+    meta = {
+        "task": "np_softmax", "device": "cpu", "hardware": "cpu",
+        "features": {"tags": ["softmax", "reduction"], "op_class": "reduction",
+                     "dtypes": ["float32"]},
+        "best": {"status": "pass_unstable", "speedup": 1.4},
+    }
+    write(os.path.join(run_dir, "meta.json"), json.dumps(meta))
+    traj = {
+        "task": "np_softmax", "task_file": "", "hardware": "cpu", "device": "cpu",
+        "features": meta["features"], "distilled": False,
+        "attempts": [{
+            "iter": 1, "status": "pass_unstable", "speedup": 1.4,
+            "speedup_ci": [1.30, 1.50], "stability_delta": 0.2, "epsilon": 0.05,
+            "strategies_declared": ["online softmax"],
+            "solution_source": "def run(x):\n    return x\n", "distilled": False,
+        }],
+    }
+    write(os.path.join(run_dir, "trajectory.json"), json.dumps(traj))
+    store = StrategyStore(os.path.join(tmp, "unstable_kb"))
+    report = distill_run(run_dir, store=store)
+    assert report["skipped"] and "unstable" in report["skipped"][0]["reason"], report
+    assert not report["evidence"], report
+    assert not any(row.get("evidence") for row in store.strategies.values())
 
 
 def check_rsi_loop_distill(tmp):
-    task_path = write(os.path.join(tmp, "rsi_tasks", "np_softmax.py"), NP_SOFTMAX_TASK)
+    # torch softmax is used here because a ~0.05 ms numpy kernel is genuinely
+    # unstable on a CPU (the P1 stability gate would skip it); the softmax
+    # task is long enough for the gate to be meaningful.
+    task_path = os.path.join(ROOT, "tasks", "level1", "softmax.py")
+    wrong = "import torch\n\n\ndef run(x):\n    return x * 2.0\n"
+    good = "import torch\n\n\ndef run(x):\n    return torch.softmax(x, dim=-1)\n"
     replay = write(os.path.join(tmp, "rsi_replay.json"), json.dumps({
         "responses": [
-            {"action": "write_solution", "content": NP_SOFTMAX_WRONG,
+            {"action": "write_solution", "content": wrong,
              "strategies": ["online softmax"], "expected_speedup": 1.3},
-            {"action": "write_solution", "content": NP_SOFTMAX_GOOD,
+            {"action": "write_solution", "content": good,
              "strategies": ["online softmax", "multi-core split"], "expected_speedup": 1.0},
             {"action": "finish", "summary": "rsi self-test"},
         ]
@@ -365,6 +457,7 @@ def check_rsi_loop_distill(tmp):
         "--knowledge-root", knowledge_root, "--out-dir", out_dir,
         "--results-file", os.path.join(tmp, "rsi_results.jsonl"),
         "--max-iters", "6", "--target-speedup", "0.5", "--timeout", "180",
+        "--profiler", "off",
         # mechanics test: this run only exercises distillation, not performance
         # evidence, so it must opt in explicitly (strict provenance is the default).
         "--allow-mechanics-evidence",
@@ -378,19 +471,19 @@ def check_rsi_loop_distill(tmp):
     run_dir = os.path.dirname(metas[0])
     with open(metas[0], encoding="utf-8") as fh:
         meta = json.load(fh)
-    assert meta["best"]["status"] == "pass", meta["best"]
+    assert meta["best"]["status"] in ("pass", "pass_unstable"), meta["best"]
 
     with open(os.path.join(run_dir, "transcript.md"), encoding="utf-8") as fh:
         transcript = fh.read()
     assert "Tuning priors" in transcript, "priors block missing from the prompt"
     assert meta["rsi"]["priors_matched"], meta["rsi"]
     assert meta["rsi"]["attempted"], meta["rsi"]
-    assert meta["rsi"]["distill"] and meta["rsi"]["distill"]["evidence"] >= 2, meta["rsi"]
 
     with open(os.path.join(run_dir, "trajectory.json"), encoding="utf-8") as fh:
         traj = json.load(fh)
     assert len(traj["attempts"]) == 2, traj["attempts"]
     assert traj["task_file"] and os.path.isfile(traj["task_file"]), traj["task_file"]
+    unstable = any(attempt.get("status") == "pass_unstable" for attempt in traj["attempts"])
 
     from rsi.trajectory import replay_trajectory
 
@@ -402,12 +495,25 @@ def check_rsi_loop_distill(tmp):
 
     store = StrategyStore(knowledge_root)
     st = store.find_by_key("online_softmax")
-    assert st is not None and st["stats"]["applied"] >= 1, st
-    assert st["stats"]["calibration_mae"] is not None, st["stats"]
-    assert any(str(e["trajectory"]).endswith("trajectory.json") for e in st["evidence"]), st["evidence"]
-    assert store.combos, "expected a combination rule from the 2-practice attempt"
-    combo = list(store.combos.values())[0]
-    assert len(combo["members"]) >= 2, combo
+    if unstable:
+        # P1.5: a noisy attempt is not distilled; the failing attempt still
+        # records its failure evidence.
+        distill = meta["rsi"]["distill"]
+        assert distill["skipped"] == 1, meta["rsi"]
+        assert distill["evidence"] == 1, meta["rsi"]
+        with open(os.path.join(run_dir, "distill_report.json"), encoding="utf-8") as fh:
+            report = json.load(fh)
+        assert any("unstable" in row["reason"] for row in report["skipped"]), report
+        assert st is not None, store.strategies
+        assert not any(e.get("outcome") == "success" for e in (st.get("evidence") or [])), st
+    else:
+        assert meta["rsi"]["distill"] and meta["rsi"]["distill"]["evidence"] >= 2, meta["rsi"]
+        assert st is not None and st["stats"]["applied"] >= 1, st
+        assert st["stats"]["calibration_mae"] is not None, st["stats"]
+        assert any(str(e["trajectory"]).endswith("trajectory.json") for e in st["evidence"]), st["evidence"]
+        assert store.combos, "expected a combination rule from the 2-practice attempt"
+        combo = list(store.combos.values())[0]
+        assert len(combo["members"]) >= 2, combo
 
     before = {k: v["stats"]["applied"] for k, v in store.strategies.items()}
     report = distill_run(run_dir, store=store, strict_provenance=False)
@@ -417,10 +523,11 @@ def check_rsi_loop_distill(tmp):
 
 def check_strict_provenance(tmp):
     """A CPU mechanics run labelled ascend-910b must not write performance evidence."""
-    task_path = write(os.path.join(tmp, "prov_tasks", "np_softmax.py"), NP_SOFTMAX_TASK)
+    task_path = os.path.join(ROOT, "tasks", "level1", "softmax.py")
+    good = "import torch\n\n\ndef run(x):\n    return torch.softmax(x, dim=-1)\n"
     replay = write(os.path.join(tmp, "prov_replay.json"), json.dumps({
         "responses": [
-            {"action": "write_solution", "content": NP_SOFTMAX_GOOD,
+            {"action": "write_solution", "content": good,
              "strategies": ["online softmax"], "expected_speedup": 1.0},
             {"action": "finish", "summary": "strict provenance self-test"},
         ]
@@ -458,11 +565,44 @@ def check_strict_provenance(tmp):
     assert all(not row.get("evidence") for row in rows), "mechanics evidence leaked into the pool"
     assert not os.path.isfile(os.path.join(root, "exemplars.jsonl")), "mechanics exemplar recorded"
 
-    meta2, rows2, _root2 = run_loop("prov_allow", ["--allow-mechanics-evidence"])
-    distill2 = meta2["rsi"]["distill"] or {}
-    assert distill2.get("provenance_valid") is False, distill2
-    assert int(distill2.get("evidence") or 0) >= 1, distill2
-    evidence = [e for row in rows2 for e in (row.get("evidence") or [])]
+    meta2, _rows2, _root2 = run_loop("prov_allow", ["--allow-mechanics-evidence"])
+    assert meta2["rsi"]["strict_provenance"] is False, meta2["rsi"]
+
+    # The end-to-end allow run can legitimately be pass_unstable on a noisy CPU
+    # (and is then skipped regardless of provenance), so the provenance switch
+    # itself is verified deterministically at the distill layer.
+    def synth_run(name):
+        run_dir = os.path.join(tmp, name)
+        meta = {"task": "softmax", "device": "cpu", "hardware": "ascend-910b",
+                "features": {"tags": ["softmax"], "op_class": "reduction",
+                             "dtypes": ["float32"]},
+                "best": {"status": "pass", "speedup": 1.0}}
+        write(os.path.join(run_dir, "meta.json"), json.dumps(meta))
+        traj = {"task": "softmax", "task_file": "", "hardware": "ascend-910b",
+                "device": "cpu", "features": meta["features"], "distilled": False,
+                "attempts": [{
+                    "iter": 1, "status": "pass", "speedup": 1.0,
+                    "speedup_ci": [0.99, 1.01], "stability_delta": 0.01,
+                    "strategies_declared": ["online softmax"],
+                    "solution_source": "def run(x):\n    return x\n", "distilled": False,
+                }]}
+        write(os.path.join(run_dir, "trajectory.json"), json.dumps(traj))
+        return run_dir
+
+    from rsi.distill import distill_run
+    from rsi.store import StrategyStore
+
+    blocked_store = StrategyStore(os.path.join(tmp, "prov_synth_strict_kb"))
+    blocked = distill_run(synth_run("prov_synth_strict"), store=blocked_store,
+                          strict_provenance=True)
+    assert not blocked["evidence"], blocked
+    assert any("provenance" in row["reason"] for row in blocked["skipped"]), blocked
+
+    allow_store = StrategyStore(os.path.join(tmp, "prov_synth_allow_kb"))
+    allowed = distill_run(synth_run("prov_synth_allow"), store=allow_store,
+                          strict_provenance=False)
+    assert allowed["evidence"], allowed
+    evidence = [e for row in allow_store.strategies.values() for e in (row.get("evidence") or [])]
     assert any(e.get("hardware") == "ascend-910b" for e in evidence), evidence
 
 
@@ -501,7 +641,7 @@ def check_adversarial_solutions(tmp):
     if accelerator:
         side = run("side_stream_hack.py", rep=50, device="auto")
         speed = float((side.get("timing") or {}).get("speedup") or 0.0)
-        assert side["status"] != "pass" or speed < 1.2, (side["status"], speed)
+        assert side["status"] not in ("pass", "pass_unstable") or speed < 1.2, (side["status"], speed)
         print("  side_stream_hack: status=%s speedup=%.3fx" % (side["status"], speed))
     else:
         print("  SKIP side_stream_hack: needs a CUDA/NPU device (CPU has no streams)")
@@ -509,7 +649,7 @@ def check_adversarial_solutions(tmp):
     speeds = []
     for _ in range(3):
         res = run("honest.py", warmup=25, rep=200)
-        assert res["status"] == "pass", (res["status"], res.get("error"))
+        assert res["status"] in ("pass", "pass_unstable"), (res["status"], res.get("error"))
         speeds.append(float(res["timing"]["speedup"]))
     median = stats_mod.median(speeds)
     assert 0.9 <= median <= 1.1, (
@@ -622,7 +762,7 @@ def check_constraint_and_baseline(tmp):
     assert cli_blocked["require"] == ["triton"], cli_blocked.get("require")
 
     allowed = run_evaluation(task=req_task, solution=with_triton, **common)
-    assert allowed["status"] == "pass", (allowed.get("status"), allowed.get("error"))
+    assert allowed["status"] in ("pass", "pass_unstable"), (allowed.get("status"), allowed.get("error"))
     assert allowed["solution_features"]["uses_triton"] is True, allowed.get("solution_features")
 
     wrong_op = write(os.path.join(tmp, "constraints", "opbase_wrong.py"),
@@ -632,12 +772,12 @@ def check_constraint_and_baseline(tmp):
     good_solution = write(os.path.join(tmp, "constraints", "good.py"), "def run(x):\n    return x + 1.0\n")
 
     res_wrong = run_evaluation(task=wrong_op, solution=good_solution, **common)
-    assert res_wrong["status"] == "pass", res_wrong.get("error")
+    assert res_wrong["status"] in ("pass", "pass_unstable"), res_wrong.get("error")
     check = res_wrong.get("baseline_check") or {}
     assert check.get("used") == "eager" and "rejected" in (check.get("fallback") or ""), check
 
     res_ok = run_evaluation(task=ok_op, solution=good_solution, **common)
-    assert res_ok["status"] == "pass", res_ok.get("error")
+    assert res_ok["status"] in ("pass", "pass_unstable"), res_ok.get("error")
     assert (res_ok.get("baseline_check") or {}).get("used") == "op", res_ok.get("baseline_check")
 
 
@@ -788,7 +928,7 @@ def check_form_and_nudge(tmp):
     run_dir = os.path.dirname(metas[0])
     with open(metas[0], encoding="utf-8") as fh:
         meta = json.load(fh)
-    assert meta["best"]["status"] == "pass", meta["best"]
+    assert meta["best"]["status"] in ("pass", "pass_unstable"), meta["best"]
     assert meta["rsi"]["nudges"] == 1, meta["rsi"]
     assert meta["rsi"]["form"] == "torch_fused_first", meta["rsi"]["form"]
     with open(os.path.join(run_dir, "transcript.md"), encoding="utf-8") as fh:
@@ -883,7 +1023,7 @@ def check_ascend_tasks(tmp):
             device="cpu", timeout=600, out_dir=os.path.join(tmp, "ascend_tasks"),
             results_file=os.path.join(tmp, "ascend_results.jsonl"), quiet=True,
         )
-        if res.get("status") != "pass":
+        if res.get("status") not in ("pass", "pass_unstable"):
             failures.append((task_rel, res.get("status"), res.get("error")))
     assert not failures, failures
 
@@ -899,12 +1039,15 @@ def main():
     check("pipeline: wrong solution fails correctness", lambda: check_pipeline_wrong(tmp, files))
     check("pipeline: input mutation is rejected", lambda: check_pipeline_mutation(tmp, files))
     check("pipeline: hanging solution times out", lambda: check_pipeline_timeout(tmp, files))
+    check("harness: ABAB bootstrap + success classification", lambda: check_statistical_gate(tmp))
+    check("harness: calibrated noise config (cpu + ascend-910b)", lambda: check_noise_config(tmp))
     check("report: pass@1 table", lambda: check_report(tmp))
     check("agent loop: replay (wrong -> good -> finish)", lambda: check_agent_replay(tmp, files))
     check("rsi: strategy pool bootstrap + retrieval priors", lambda: check_rsi_store_and_retrieve(tmp))
     check("rsi: applicability conditions narrow with evidence", lambda: check_rsi_condition_refinement(tmp))
-    check("rsi: loop records trajectory, distills, reuses priors", lambda: check_rsi_loop_distill(tmp))
-    check("rsi: strict provenance blocks CPU evidence for ascend-910b", lambda: check_strict_provenance(tmp))
+    check("rsi: verification requires two independent runs", lambda: check_verified_two_runs(tmp))
+    check("rsi: distill gate classifies neutral vs success", lambda: check_distill_gate(tmp))
+    check("rsi: unstable attempts are skipped by distill", lambda: check_unstable_skipped(tmp))
     check("rsi: attribution precision (declarations resolve, prose ignored)", lambda: check_rsi_attribution_precision(tmp))
     check("rsi: knowledge blocks (exemplars, bottleneck playbook, calibration)", lambda: check_knowledge_blocks(tmp))
     check("harness: require-triton gate + op-baseline sanity check", lambda: check_constraint_and_baseline(tmp))
@@ -917,6 +1060,8 @@ def main():
         check("profiling: agent feedback carries the breakdown", lambda: check_agent_profiling(tmp))
         check("torch: vector_add good/wrong examples", lambda: check_torch_examples(tmp))
         check("torch: softmax_manual example", lambda: check_torch_softmax(tmp))
+        check("rsi: loop records trajectory, distills, reuses priors", lambda: check_rsi_loop_distill(tmp))
+        check("rsi: strict provenance blocks CPU evidence for ascend-910b", lambda: check_strict_provenance(tmp))
         check("adversarial: cheat regression set (cache/patch/side-stream/view/reference)",
           lambda: check_adversarial_solutions(tmp))
         check("real-world tasks: example solutions pass on CPU",

@@ -309,7 +309,9 @@ def main(argv=None) -> int:
         summary = format_summary(result)
         log("harness", summary, meta={"iteration": it, "status": result.get("status")})
         status = result.get("status") or "unknown"
-        speedup = float((result.get("timing") or {}).get("speedup") or 0.0)
+        passed_ok = status in ("pass", "pass_unstable")
+        timing = result.get("timing") or {}
+        speedup = float(timing.get("speedup") or 0.0)
 
         resolved = []
         if use_rsi:
@@ -324,14 +326,14 @@ def main(argv=None) -> int:
             attempted_ids.update(resolved)
 
         profile_text, profile_meta = "", None
-        if status == "pass":
+        if passed_ok:
             passed_count += 1
         # guarantee at least one profile per run: first passing attempt always, then every N-th
-        if (status == "pass" and args.profiler != "off" and args.profile_every > 0
+        if (passed_ok and args.profiler != "off" and args.profile_every > 0
                 and (passed_count == 1 or passed_count % args.profile_every == 0)):
             profile_text, profile_meta = do_profile(path, it)
 
-        measured = speedup if status == "pass" else 0.0
+        measured = speedup if passed_ok else 0.0
         attempt = {
             "iter": it,
             "task": task.name,
@@ -339,6 +341,11 @@ def main(argv=None) -> int:
             "solution": os.path.abspath(path),
             "status": status,
             "speedup": speedup,
+            "speedup_ci": timing.get("speedup_ci"),
+            "n_rounds": timing.get("n_rounds"),
+            "stability_delta": timing.get("stability_delta"),
+            "epsilon": timing.get("epsilon"),
+            "unstable": status == "pass_unstable",
             "error": result.get("error"),
             "expected_speedup": expected,
             "strategies_declared": list(declared),
@@ -353,19 +360,19 @@ def main(argv=None) -> int:
         attempts_file.write(json.dumps(attempt, ensure_ascii=False) + "\n")
         attempts_file.flush()
         if mem:
-            if status == "pass":
+            if passed_ok:
                 mem.resolve_failures(mem_write_features, run_name, "eval pass")
             else:
                 mem.record_failure_from_result(_memory_pseudo(result), mem_write_features,
                                                run_name, task.name)
 
         uses_kernel = bool((result.get("solution_features") or {}).get("uses_triton"))
-        if status == "pass" and speedup >= best["speedup"]:
+        if passed_ok and speedup >= best["speedup"]:
             best.update(status=status, speedup=speedup, path=path, uses_triton=uses_kernel)
         elif best["status"] is None:
             best.update(status=status, speedup=speedup, path=path, uses_triton=uses_kernel)
 
-        hints = failure_hints(matched, attempted_ids) if (use_rsi and status != "pass") else ""
+        hints = failure_hints(matched, attempted_ids) if (use_rsi and not passed_ok) else ""
         return build_feedback(iteration=it, status=status, summary=summary, speedup=speedup,
                               best=best, hints=hints, profiling=profile_text)
 
@@ -455,7 +462,7 @@ def main(argv=None) -> int:
         elif kind == "finish":
             finisher = str(action.get("summary", ""))
             log("user", "finish requested: %s" % finisher)
-            if best.get("status") != "pass" and iteration < max_iters and nudge_count < 2:
+            if best.get("status") not in ("pass", "pass_unstable") and iteration < max_iters and nudge_count < 2:
                 nudge_count += 1
                 message = ("No passing solution yet and you still have %d iteration(s) of budget — do not "
                            "stop. Switch implementation form (torch fused ops vs triton kernel), load a "
@@ -469,7 +476,7 @@ def main(argv=None) -> int:
         messages.append({"role": "user", "content": message})
         log("user", message)
 
-        if best["status"] == "pass" and best["speedup"] >= target and not args.keep_going:
+        if best["status"] in ("pass", "pass_unstable") and best["speedup"] >= target and not args.keep_going:
             log("system", "target speedup %.2fx reached (best %.3fx) -> stopping" % (target, best["speedup"]))
             break
 
@@ -557,7 +564,7 @@ def main(argv=None) -> int:
         print("final solution: %s" % final_path)
     if finisher:
         print("agent summary: %s" % finisher)
-    return 0 if best.get("status") == "pass" else 1
+    return 0 if best.get("status") in ("pass", "pass_unstable") else 1
 
 
 if __name__ == "__main__":

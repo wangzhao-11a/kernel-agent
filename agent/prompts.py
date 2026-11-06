@@ -129,6 +129,11 @@ def build_feedback(iteration: int, status: str, summary: str, speedup: float, be
         lines.append("This solution passed. Speedup vs baseline: %.3fx (best so far: %.3fx)."
                      % (speedup, best.get("speedup", 0.0)))
         lines.append("You may reply with finish, or another write_solution to push the speedup further.")
+    elif status == "pass_unstable":
+        lines.append("This solution passed correctness, but the measurement was unstable (the "
+                     "timing dispersion exceeds the calibrated device noise). Treat the speedup "
+                     "as unproven and make the implementation's timing more consistent.")
+        lines.append("Best so far: %s at %.3fx." % (best.get("status"), best.get("speedup", 0.0)))
     else:
         lines.append("This solution did NOT pass. Fix the root cause and reply with a new write_solution.")
         lines.append("Best so far: %s at %.3fx." % (best.get("status"), best.get("speedup", 0.0)))

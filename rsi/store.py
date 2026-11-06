@@ -117,7 +117,7 @@ class StrategyStore:
             "confidence": confidence,
             "source": source,
             "evidence": [],
-            "stats": {"applied": 0, "succeeded": 0, "failed": 0, "neutral": 0,
+            "stats": {"applied": 0, "succeeded": 0, "failed": 0, "regressed": 0, "neutral": 0,
                       "ema_speedup": None, "calibration_mae": None},
             "created": _now(),
             "updated": _now(),
@@ -132,10 +132,10 @@ class StrategyStore:
         return None
 
     def record_evidence(self, sid, trajectory, task, measured_speedup, outcome,
-                        expected_speedup=None, hardware="", dtype=""):
+                        expected_speedup=None, hardware="", dtype="", run_id=""):
         st = self.strategies[sid]
         st["evidence"].append({
-            "trajectory": trajectory, "task": task,
+            "trajectory": trajectory, "run_id": run_id, "task": task,
             "measured_speedup": round(float(measured_speedup or 0.0), 4),
             "expected_speedup": expected_speedup,
             "outcome": outcome, "hardware": hardware, "dtype": dtype, "at": _now(),
@@ -145,6 +145,8 @@ class StrategyStore:
         stats["applied"] = int(stats.get("applied", 0)) + 1
         if outcome == "success":
             stats["succeeded"] = int(stats.get("succeeded", 0)) + 1
+        elif outcome == "regression":
+            stats["regressed"] = int(stats.get("regressed", 0)) + 1
         elif outcome == "failure":
             stats["failed"] = int(stats.get("failed", 0)) + 1
         else:
@@ -156,22 +158,31 @@ class StrategyStore:
             err = abs(float(expected_speedup) - float(measured_speedup))
             prev = stats.get("calibration_mae")
             stats["calibration_mae"] = round(err, 4) if prev is None else round(0.6 * prev + 0.4 * err, 4)
-        if outcome == "success" and st.get("confidence") != "seed":
-            st["confidence"] = "verified"
+        if outcome == "success":
+            # Verification is a reproduction claim: at least two independent runs
+            # (different run_id) must have produced a significant success.
+            runs = {str(e.get("run_id") or e.get("trajectory") or "")
+                    for e in st["evidence"] if e.get("outcome") == "success"}
+            runs.discard("")
+            st["confidence"] = "verified" if len(runs) >= 2 else "candidate"
         st["updated"] = _now()
         return st
 
     def refine_conditions(self, sid):
         """Narrow hardware/dtypes to the subset with a clean success record."""
         st = self.strategies[sid]
-        evidence = [e for e in st["evidence"] if e.get("outcome") in ("success", "failure")]
+        evidence = [e for e in st["evidence"]
+                    if e.get("outcome") in ("success", "failure", "regression")]
         if len(evidence) < 2:
             return None
         groups = {}
         for e in evidence:
             key = (e.get("hardware") or "unknown", e.get("dtype") or "unknown")
             g = groups.setdefault(key, {"success": 0, "failure": 0})
-            g[e["outcome"]] += 1
+            if e["outcome"] == "success":
+                g["success"] += 1
+            else:
+                g["failure"] += 1
         winners = [k for k, g in groups.items() if g["success"] and not g["failure"]]
         losers = [k for k, g in groups.items() if g["failure"] and not g["success"]]
         if not winners or not losers:
