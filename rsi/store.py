@@ -13,6 +13,7 @@ import json
 import os
 import time
 
+from .detectors import detector_for
 from .practices import PRACTICES
 
 DEFAULT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge")
@@ -64,6 +65,16 @@ class StrategyStore:
                 self.combos[row["id"]] = row
         if not self.strategies:
             self.bootstrap()
+        self._attach_seed_detectors()
+
+    def _attach_seed_detectors(self) -> None:
+        """Older pools predate detectors; fill them in by practice key."""
+        for st in self.strategies.values():
+            if st.get("detector"):
+                continue
+            detector = detector_for(st.get("key") or "")
+            if detector:
+                st["detector"] = detector
 
     def bootstrap(self) -> None:
         for p in PRACTICES:
@@ -71,6 +82,7 @@ class StrategyStore:
                 statement=p["statement"], tags=p["tags"], op_class=p["op_class"],
                 keywords=p["keywords"], expected=p["expected_speedup"],
                 source="seed", key=p["key"], confidence="seed",
+                detector=detector_for(p["key"]),
             )
         self.save()
 
@@ -96,13 +108,15 @@ class StrategyStore:
         return "%s-%04d" % (prefix, top + 1)
 
     def upsert(self, statement, tags=None, op_class=None, keywords=None, expected=None,
-               source="distilled", key=None, confidence="candidate"):
+               source="distilled", key=None, confidence="candidate", detector=None):
         normalized = statement.strip().lower()
         for st in self.strategies.values():
             if (key and st.get("key") == key) or st["statement"].strip().lower() == normalized:
                 for kw in keywords or []:
                     if kw not in st.setdefault("keywords", []):
                         st["keywords"].append(kw)
+                if detector and not st.get("detector"):
+                    st["detector"] = detector
                 st["updated"] = _now()
                 return st
         sid = self._next_id("stg")
@@ -114,6 +128,7 @@ class StrategyStore:
             "conditions": {"op_class": list(op_class or []), "hardware": [], "dtypes": []},
             "expected": {"speedup": float(expected) if expected else 1.0},
             "keywords": list(keywords or []),
+            "detector": detector or None,
             "confidence": confidence,
             "source": source,
             "evidence": [],
@@ -133,13 +148,14 @@ class StrategyStore:
 
     def record_evidence(self, sid, trajectory, task, measured_speedup, outcome,
                         expected_speedup=None, hardware="", dtype="", run_id="",
-                        holdout_ok=None, shape_signature=None):
+                        holdout_ok=None, shape_signature=None, ablation=None):
         st = self.strategies[sid]
         st["evidence"].append({
             "trajectory": trajectory, "run_id": run_id, "task": task,
             "measured_speedup": round(float(measured_speedup or 0.0), 4),
             "expected_speedup": expected_speedup,
             "outcome": outcome, "hardware": hardware, "dtype": dtype,
+            "ablation": ablation or {"performed": False},
             "holdout_ok": holdout_ok,
             "shape_signature": dict(shape_signature or {}),
             "at": _now(),
@@ -246,7 +262,8 @@ class StrategyStore:
         return note
 
     # ---------------------------------------------------------------- combos
-    def upsert_combo(self, member_ids, measured_speedup=None, task="", trajectory=""):
+    def upsert_combo(self, member_ids, measured_speedup=None, task="", trajectory="",
+                     contributions=None):
         key = tuple(sorted(member_ids))
         for combo in self.combos.values():
             if tuple(sorted(combo.get("members", []))) == key:
@@ -257,12 +274,15 @@ class StrategyStore:
                 combo["evidence"].append({"trajectory": trajectory, "task": task,
                                           "measured_speedup": measured_speedup, "at": _now()})
                 combo["evidence"] = combo["evidence"][-20:]
+                if contributions:
+                    combo["contributions"] = dict(contributions)
                 combo["updated"] = _now()
                 return combo
         cid = self._next_id("combo")
         rec = {
             "id": cid,
             "members": list(key),
+            "contributions": dict(contributions or {}),
             "conditions": {},
             "stats": {"applied": 1, "best_speedup": round(float(measured_speedup), 4) if measured_speedup else None},
             "evidence": [{"trajectory": trajectory, "task": task,
