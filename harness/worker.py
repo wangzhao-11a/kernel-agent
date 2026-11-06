@@ -202,6 +202,44 @@ def time_baseline(task, input_sets, device: str, warmup: int, rep: int, flush: b
     return None, b_kind, fallback, error, baseline_fn
 
 
+def measure_holdout(task, run, baseline_fn, device: str, warmup: int, rep: int,
+                    flush: bool, epsilon) -> dict:
+    """Correctness + ABAB speedup on the first holdout case (promotion gate)."""
+    case = task.holdout_cases[0]
+    out = {"case": case.get("name") or "holdout", "ok": False, "speedup": None,
+           "speedup_ci": None, "n_rounds": 0, "epsilon": epsilon, "success": False}
+    try:
+        sets = [list(task.holdout_inputs(case, device, trial)) for trial in range(2)]
+        inputs = sets[0]
+        ref = _wrap_inference(task.reference)(*inputs)
+        dev.sync(device)
+        got = run(*inputs)
+        dev.sync(device)
+        cmp = corr_mod.compare_outputs(
+            ref, got, float(task.tolerance.get("atol", 1e-5)),
+            float(task.tolerance.get("rtol", 1e-5)))
+        out["ok"] = bool(cmp.get("ok"))
+        if not out["ok"]:
+            out["reason"] = cmp.get("reason") or "holdout correctness failed"
+            return out
+        measured = measure_mod.ab_benchmark(
+            run, _wrap_inference(baseline_fn), sets, device, rounds=3,
+            warmup=max(3, int(warmup) // 2), rep=max(5, int(rep) // 4), flush_l2=flush)
+        out.update({
+            "speedup": measured["speedup"],
+            "speedup_ci": measured["speedup_ci"],
+            "n_rounds": measured["n_rounds"],
+            "stability_delta": measured["stability_delta"],
+            "success": noise_mod.classify(measured["speedup_ci"], epsilon) == "success",
+        })
+        if epsilon is not None and measured["stability_delta"] > epsilon:
+            out["success"] = False
+            out["unstable"] = True
+    except Exception as exc:
+        out["reason"] = "%s: %s" % (type(exc).__name__, exc)
+    return out
+
+
 def cache_probe(task, run, device: str, input_sets) -> dict:
     """Change the inputs once more and check the output was recomputed."""
     probe = {"applicable": False, "ok": None, "reason": None}
@@ -300,6 +338,12 @@ def format_summary(result: dict) -> str:
             "uncalibrated" if eps is None else "%.4f" % eps, t.get("unstable", False)))
         lines.append("timing inputs: %d rotating set(s), perturbed=%s, device_sync=%s" % (
             t.get("n_input_sets", 1), t.get("perturbed", False), t.get("device_sync", False)))
+        hold = t.get("holdout") or {}
+        if hold:
+            lines.append("hold-out: %s | correctness=%s | speedup=%s | CI=%s | success=%s" % (
+                hold.get("case"), "ok" if hold.get("ok") else "FAILED",
+                "%.3fx" % hold["speedup"] if hold.get("speedup") is not None else "-",
+                hold.get("speedup_ci"), hold.get("success")))
         pre = result.get("baseline_pre_import") or {}
         if pre.get("median_ms"):
             lines.append("baseline(pre-import guard)=%.4f ms" % pre["median_ms"])
@@ -346,6 +390,9 @@ def main(argv=None) -> int:
     ap.add_argument("--trials", type=int, default=None)
     ap.add_argument("--rounds", type=int, default=measure_mod.DEFAULT_ROUNDS,
                     help="ABAB measurement rounds (default %d)" % measure_mod.DEFAULT_ROUNDS)
+    ap.add_argument("--holdout-config", default=None,
+                    help="holdout shape config (default configs/holdout.json)")
+    ap.add_argument("--no-holdout", action="store_true", help="skip the holdout promotion gate")
     ap.add_argument("--baseline", default=None, help="override the task baseline: eager | compile")
     ap.add_argument("--flush-l2", dest="flush_l2", action="store_true", default=None)
     ap.add_argument("--no-flush-l2", dest="flush_l2", action="store_false")
@@ -398,7 +445,7 @@ def main(argv=None) -> int:
         return _finish(result, args.out, t_start)
 
     try:
-        task = load_task(args.task)
+        task = load_task(args.task, holdout_config=args.holdout_config)
     except Exception as exc:
         result["status"] = "task_error"
         result["error"] = "%s: %s" % (type(exc).__name__, exc)
@@ -540,12 +587,18 @@ def main(argv=None) -> int:
         return _finish(result, args.out, t_start)
 
     unstable = bool(epsilon is not None and measurement["stability_delta"] > epsilon)
+    holdout = None
+    train_ci = measurement.get("speedup_ci")
+    if (not args.no_holdout and task.holdout_cases and train_ci
+            and (epsilon is None or train_ci[0] > 1.0 + epsilon)):
+        holdout = measure_holdout(task, run, baseline_fn, device, warmup, rep, flush, epsilon)
     result["timing"] = {
         **measurement,
         "baseline_kind": b_kind,
         "baseline_fallback": baseline_fallback,
         "epsilon": epsilon,
         "unstable": unstable,
+        "holdout": holdout,
         "n_input_sets": len(input_sets),
         "perturbed": True,
         "device_sync": dev.is_accelerator(device),

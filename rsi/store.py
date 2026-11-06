@@ -148,7 +148,7 @@ class StrategyStore:
 
     def record_evidence(self, sid, trajectory, task, measured_speedup, outcome,
                         expected_speedup=None, hardware="", dtype="", run_id="",
-                        ablation=None):
+                        holdout_ok=None, shape_signature=None, ablation=None):
         st = self.strategies[sid]
         st["evidence"].append({
             "trajectory": trajectory, "run_id": run_id, "task": task,
@@ -156,6 +156,8 @@ class StrategyStore:
             "expected_speedup": expected_speedup,
             "outcome": outcome, "hardware": hardware, "dtype": dtype,
             "ablation": ablation or {"performed": False},
+            "holdout_ok": holdout_ok,
+            "shape_signature": dict(shape_signature or {}),
             "at": _now(),
         })
         st["evidence"] = st["evidence"][-40:]
@@ -178,9 +180,12 @@ class StrategyStore:
             stats["calibration_mae"] = round(err, 4) if prev is None else round(0.6 * prev + 0.4 * err, 4)
         if outcome == "success":
             # Verification is a reproduction claim: at least two independent runs
-            # (different run_id) must have produced a significant success.
+            # must have succeeded, and a success that failed the holdout shapes
+            # cannot count toward it (P3.1).
             runs = {str(e.get("run_id") or e.get("trajectory") or "")
-                    for e in st["evidence"] if e.get("outcome") == "success"}
+                    for e in st["evidence"]
+                    if e.get("outcome") == "success"
+                    and e.get("holdout_ok") is not False}
             runs.discard("")
             st["confidence"] = "verified" if len(runs) >= 2 else "candidate"
         st["updated"] = _now()
@@ -195,7 +200,10 @@ class StrategyStore:
             return None
         groups = {}
         for e in evidence:
-            key = (e.get("hardware") or "unknown", e.get("dtype") or "unknown")
+            sig = e.get("shape_signature") or {}
+            key = (e.get("hardware") or "unknown", e.get("dtype") or "unknown",
+                   sig.get("half_aligned_32b"), sig.get("prime_outer"),
+                   sig.get("outer_bucket"))
             g = groups.setdefault(key, {"success": 0, "failure": 0})
             if e["outcome"] == "success":
                 g["success"] += 1
@@ -215,10 +223,40 @@ class StrategyStore:
         if dtypes and set(dtypes) != set(cond.get("dtypes") or []):
             cond["dtypes"] = dtypes
             notes.append("dtypes->%s" % ",".join(dtypes))
+
+        # Shape features that are consistent across the winning group narrow the
+        # applicability too (P3.2), using the same signature keys as operator memory.
+        shape_values = {}
+        for e in evidence:
+            if e.get("outcome") != "success":
+                continue
+            sig = e.get("shape_signature") or {}
+            key = (e.get("hardware") or "unknown", e.get("dtype") or "unknown",
+                   sig.get("half_aligned_32b"), sig.get("prime_outer"),
+                   sig.get("outer_bucket"))
+            if key not in winners:
+                continue
+            for field in ("half_aligned_32b", "prime_outer", "outer_bucket"):
+                if sig.get(field) is not None:
+                    shape_values.setdefault(field, set()).add(sig[field])
+        if shape_values and all(len(values) == 1 for values in shape_values.values()):
+            narrowed = {k: next(iter(v)) for k, v in shape_values.items()}
+            if cond.get("shape") != narrowed:
+                cond["shape"] = narrowed
+                notes.append("shape->%s" % json.dumps(narrowed, sort_keys=True))
+
         if not notes:
             return None
+
+        def _fmt_group(k):
+            base = "%s/%s" % (k[0], k[1])
+            shape = {field: value for field, value in
+                     zip(("half_aligned_32b", "prime_outer", "outer_bucket"), k[2:])
+                     if value is not None}
+            return base + ("/shape:" + json.dumps(shape, sort_keys=True) if shape else "")
+
         note = "narrowed after evidence (%s); excluded %s" % (
-            "; ".join(notes), ", ".join("%s/%s" % k for k in losers))
+            "; ".join(notes), ", ".join(_fmt_group(k) for k in losers))
         cond["refined_note"] = note
         st["updated"] = _now()
         return note

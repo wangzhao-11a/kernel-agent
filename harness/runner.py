@@ -38,6 +38,8 @@ def run_evaluation(
     rep=None,
     rounds=None,
     trials=None,
+    holdout_config=None,
+    holdout=True,
     baseline=None,
     flush_l2=None,
     fail_on_suspicious: bool = False,
@@ -66,6 +68,10 @@ def run_evaluation(
         cmd += ["--rep", str(int(rep))]
     if rounds is not None:
         cmd += ["--rounds", str(int(rounds))]
+    if holdout_config:
+        cmd += ["--holdout-config", holdout_config]
+    if not holdout:
+        cmd.append("--no-holdout")
     if trials is not None:
         cmd += ["--trials", str(int(trials))]
     if baseline:
@@ -164,6 +170,8 @@ def main(argv=None) -> int:
     ap.add_argument("--warmup", type=int, default=None)
     ap.add_argument("--rep", type=int, default=None)
     ap.add_argument("--rounds", type=int, default=None, help="ABAB measurement rounds")
+    ap.add_argument("--holdout-config", default=None, help="holdout shape config")
+    ap.add_argument("--no-holdout", action="store_true", help="skip the holdout promotion gate")
     ap.add_argument("--trials", type=int, default=None)
     ap.add_argument("--baseline", default=None, help="eager | compile")
     ap.add_argument("--flush-l2", dest="flush_l2", action="store_true", default=None)
@@ -182,6 +190,7 @@ def main(argv=None) -> int:
     result = run_evaluation(
         task=args.task, solution=args.solution, device=args.device, timeout=args.timeout,
         warmup=args.warmup, rep=args.rep, rounds=args.rounds, trials=args.trials,
+        holdout_config=args.holdout_config, holdout=not args.no_holdout,
         baseline=args.baseline,
         flush_l2=args.flush_l2, fail_on_suspicious=args.fail_on_suspicious,
         ignore_require=args.ignore_require,

@@ -126,7 +126,7 @@ P2_TASK = textwrap.dedent('''
         "tolerance": {"atol": 1e-5, "rtol": 1e-5},
         "num_trials": 2,
         "warmup": 5,
-        "rep": 30,
+        "rep": 100,
         "input_specs": [{"kind": "randn", "shape": [2048, 4096], "dtype": "float32"}],
         "entrypoint": "run",
         "baseline": "eager",
@@ -678,6 +678,145 @@ def check_strict_provenance(tmp):
     assert any(e.get("hardware") == "ascend-910b" for e in evidence), evidence
 
 
+def check_p3_verified_holdout(tmp):
+    """P3.1: a train-only success cannot verify a strategy."""
+    from rsi.store import StrategyStore
+
+    for holdout_ok, expected in ((False, "candidate"), (True, "verified")):
+        store = StrategyStore(os.path.join(tmp, "p3_holdout_%s" % holdout_ok))
+        st = store.find_by_key("block_tiling")
+        store.record_evidence(st["id"], "a", "t", 1.4, "success",
+                              run_id="r1", holdout_ok=holdout_ok)
+        store.record_evidence(st["id"], "b", "t", 1.4, "success",
+                              run_id="r2", holdout_ok=holdout_ok)
+        assert st["confidence"] == expected, (holdout_ok, st["confidence"])
+
+
+def check_p3_holdout_measurement(tmp):
+    """P3.1: a solution that is only faster on the training shape fails the holdout gate."""
+    from harness.runner import run_evaluation
+    from harness.tasks import load_task
+
+    root = os.path.join(tmp, "p3_holdout_task")
+    task_path = write(os.path.join(root, "task.py"), textwrap.dedent('''
+        import torch
+        TASK = {"name": "p3_slow_ref", "level": 1,
+                "tolerance": {"atol": 1e-5, "rtol": 1e-5},
+                "num_trials": 2, "warmup": 5, "rep": 100,
+                "input_specs": [{"kind": "randn", "shape": [2048, 4096], "dtype": "float32"}],
+                "entrypoint": "run", "baseline": "eager", "tags": ["softmax", "reduction"]}
+        def reference(x):
+            m = x.max(dim=-1, keepdim=True).values
+            e = torch.exp(x - m)
+            return e / e.sum(dim=-1, keepdim=True)
+    '''))
+    solution = write(os.path.join(root, "solution.py"), textwrap.dedent('''
+        import torch
+        def run(x):
+            if tuple(x.shape) == (2048, 4096):
+                return torch.softmax(x, dim=-1)
+            m = x.max(dim=-1, keepdim=True).values
+            e = torch.exp(x - m)
+            return e / e.sum(dim=-1, keepdim=True)
+    '''))
+    config = write(os.path.join(root, "holdout.json"), json.dumps({
+        "schema_version": 1,
+        "tasks": {"p3_slow_ref": {"cases": [
+            {"name": "holdout-1024x4096", "shapes": [[1024, 4096]]}]}},
+    }))
+    task = load_task(task_path, holdout_config=config)
+    assert task.holdout_cases, task.holdout_cases
+    shapes = [tuple(x.shape) for x in task.holdout_inputs(task.holdout_cases[0], "cpu", 0)]
+    assert shapes == [(1024, 4096)], shapes
+    res = run_evaluation(
+        task=task_path, solution=solution, device="cpu", timeout=900,
+        holdout_config=config, out_dir=os.path.join(root, "out"),
+        results_file=os.path.join(root, "results.jsonl"), append=False, quiet=True)
+    hold = (res.get("timing") or {}).get("holdout") or {}
+    assert hold.get("ok") is True, hold
+    assert hold.get("speedup_ci"), hold
+    assert hold.get("success") is False, hold
+    assert res["timing"]["speedup"] > 2.0, res["timing"]["speedup"]
+
+
+def check_p3_shape_refinement(tmp):
+    from rsi.memory import shape_signature
+    from rsi.store import StrategyStore
+
+    store = StrategyStore(os.path.join(tmp, "p3_shape_kb"))
+    st = store.find_by_key("block_tiling")
+    aligned = shape_signature((2048, 4096), -1, "float32")
+    prime = shape_signature((4099, 4096), -1, "float32")
+    for index in range(2):
+        store.record_evidence(st["id"], "aligned-%d" % index, "t", 1.4, "success",
+                              hardware="ascend-910b", dtype="float32",
+                              run_id="aligned-%d" % index, shape_signature=aligned)
+        store.record_evidence(st["id"], "prime-%d" % index, "t", 0.8, "failure",
+                              hardware="ascend-910b", dtype="float32",
+                              run_id="prime-%d" % index, shape_signature=prime)
+    note = store.refine_conditions(st["id"])
+    assert note and "shape->" in note, note
+    shape = st["conditions"].get("shape") or {}
+    assert shape.get("prime_outer") is False, shape
+    assert shape.get("half_aligned_32b") is True, shape
+
+
+def check_p3_retrieval_calibration(tmp):
+    from rsi.retrieve import retrieve
+    from rsi.store import StrategyStore
+
+    store = StrategyStore(os.path.join(tmp, "p3_quality_kb"))
+    alpha = store.upsert(statement="alpha strategy", key="alpha",
+                         tags=["softmax", "reduction"], op_class=["reduction"],
+                         keywords=["alpha"])
+    beta = store.upsert(statement="beta strategy", key="beta",
+                        tags=["softmax", "reduction"], op_class=["reduction"],
+                        keywords=["beta"])
+    for strategy in (alpha, beta):
+        strategy["stats"].update({"applied": 10, "succeeded": 8, "ema_speedup": 1.2})
+    alpha["stats"]["calibration_mae"] = 0.1
+    beta["stats"]["calibration_mae"] = 1.0
+    feats = {"tags": ["softmax", "reduction"], "op_class": "reduction", "dtypes": ["float32"]}
+    ranked = retrieve(store, feats, "cpu", top_k=10, min_match=0)
+    keys = [strategy.get("key") for strategy, _score, _match in ranked]
+    assert "alpha" in keys and "beta" in keys, keys
+    assert keys.index("alpha") < keys.index("beta"), keys
+
+
+def check_p3_exemplar_archive(tmp):
+    from rsi.exemplars import record_exemplar, retrieve_exemplars, update_descendant_gain
+
+    root = os.path.join(tmp, "p3_exemplars")
+    torch_src = "import torch\n\ndef run(x):\n    return torch.softmax(x, dim=-1)\n"
+    triton_src = ("import triton\nimport triton.language as tl\n\n"
+                  "@triton.jit\ndef k():\n    pass\n\n\ndef run(x):\n    return x\n")
+    fast = record_exemplar(root, "softmax", torch_src, 1.6, hardware="cpu",
+                           profile_top=["aten::softmax"], tags=["softmax"],
+                           op_class="reduction")
+    slow = record_exemplar(root, "softmax", triton_src, 1.2, hardware="cpu",
+                           profile_top=["aten::softmax"], tags=["softmax"],
+                           op_class="reduction")
+    feats = {"name": "softmax", "tags": ["softmax"], "op_class": "reduction",
+             "dtypes": ["float32"]}
+    got = retrieve_exemplars(root, feats, "cpu", top_k=5)
+    forms = {row.get("form") for row in got}
+    assert {"torch_fused", "triton"} <= forms, got
+    assert fast["descendant_gain"] == 0.0 and slow["descendant_gain"] == 0.0, (fast, slow)
+    # the same cell keeps only the fastest version
+    assert record_exemplar(root, "softmax", torch_src, 1.1, hardware="cpu",
+                           profile_top=["aten::softmax"])["speedup"] == 1.6
+    update_descendant_gain(root, [fast["id"]], 1.9)
+    update_descendant_gain(root, [fast["id"]], 1.7)
+    gain = next(row for row in retrieve_exemplars(root, feats, "cpu", top_k=5)
+                if row["id"] == fast["id"])["descendant_gain"]
+    assert gain == 0.3, gain
+
+
+def check_p3_evolve_holdout(tmp):
+    from rsi.evolve import holdout_label
+
+    assert holdout_label("softmax") == "holdout-1024x4096", holdout_label("softmax")
+    assert holdout_label("no_such_task") == "shape-x0.5"
 def _p2_sources():
     full = """import torch
 
@@ -1272,6 +1411,11 @@ def main():
     check("rsi: strategy pool bootstrap + retrieval priors", lambda: check_rsi_store_and_retrieve(tmp))
     check("rsi: applicability conditions narrow with evidence", lambda: check_rsi_condition_refinement(tmp))
     check("rsi: verification requires two independent runs", lambda: check_verified_two_runs(tmp))
+    check("p3: verification requires holdout success", lambda: check_p3_verified_holdout(tmp))
+    check("p3: shape features narrow applicability", lambda: check_p3_shape_refinement(tmp))
+    check("p3: calibration error down-weights retrieval", lambda: check_p3_retrieval_calibration(tmp))
+    check("p3: exemplar behavior archive + descendant gain", lambda: check_p3_exemplar_archive(tmp))
+    check("p3: evolve plan uses configured holdout", lambda: check_p3_evolve_holdout(tmp))
     check("rsi: distill gate classifies neutral vs success", lambda: check_distill_gate(tmp))
     check("rsi: unstable attempts are skipped by distill", lambda: check_unstable_skipped(tmp))
     check("rsi: attribution precision (declarations resolve, prose ignored)", lambda: check_rsi_attribution_precision(tmp))
@@ -1288,6 +1432,7 @@ def main():
         check("torch: softmax_manual example", lambda: check_torch_softmax(tmp))
         check("rsi: loop records trajectory, distills, reuses priors", lambda: check_rsi_loop_distill(tmp))
         check("rsi: strict provenance blocks CPU evidence for ascend-910b", lambda: check_strict_provenance(tmp))
+        check("p3: holdout measurement rejects train-only gains", lambda: check_p3_holdout_measurement(tmp))
         check("p2: claimed-only declarations gain no evidence", lambda: check_p2_claimed_only(tmp))
         check("p2: ablation evidence gates success and combos", lambda: check_p2_ablation_end_to_end(tmp))
         check("p2: syntax errors do not count as strategy failures", lambda: check_p2_stage_failure(tmp))
