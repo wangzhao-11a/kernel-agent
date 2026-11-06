@@ -1,0 +1,488 @@
+{
+  "schema_version": 1,
+  "kind": "p5",
+  "pilot": true,
+  "started": "2026-11-05T08:29:41Z",
+  "finished": "2026-11-05T08:44:30Z",
+  "model": "deepseek-chat",
+  "provider": "openai",
+  "base_url": "https://api.deepseek.com/v1",
+  "temperature": 0.2,
+  "device": "npu",
+  "max_iters": 3,
+  "seeds": 2,
+  "train_budget": 8,
+  "target_speedup": 5.0,
+  "holdout_tasks": [
+    "softmax",
+    "matmul",
+    "mla_attention",
+    "moe_permute"
+  ],
+  "train_tasks": [
+    "vector_add",
+    "rmsnorm",
+    "decode_attention",
+    "grouped_matmul",
+    "moe_finalize_routing",
+    "rope",
+    "sdpa_attention",
+    "grouped_gemm_swiglu"
+  ],
+  "groups": "kb,no_rsi",
+  "rows": [
+    {
+      "task": "softmax",
+      "seed": 1,
+      "group": "kb",
+      "rc": 1,
+      "status": "fail_correctness",
+      "iterations": 3,
+      "first_pass_iter": 4,
+      "best_speedup": 0.0,
+      "total_tokens": 7509,
+      "fail_suspicious": 0,
+      "wall_s": 57.5,
+      "run_dir": "runs/p5/pilot1/eval/softmax/seed1/kb/20261105-083219_softmax",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "softmax",
+      "seed": 1,
+      "group": "no_rsi",
+      "rc": 0,
+      "status": "pass",
+      "iterations": 3,
+      "first_pass_iter": 1,
+      "best_speedup": 0.7536,
+      "total_tokens": 5461,
+      "fail_suspicious": 0,
+      "wall_s": 54.2,
+      "run_dir": "runs/p5/pilot1/eval/softmax/seed1/no_rsi/20261105-083317_softmax",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "softmax",
+      "seed": 2,
+      "group": "kb",
+      "rc": 0,
+      "status": "pass",
+      "iterations": 3,
+      "first_pass_iter": 1,
+      "best_speedup": 1.001,
+      "total_tokens": 6452,
+      "fail_suspicious": 0,
+      "wall_s": 43.2,
+      "run_dir": "runs/p5/pilot1/eval/softmax/seed2/kb/20261105-083410_softmax",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "softmax",
+      "seed": 2,
+      "group": "no_rsi",
+      "rc": 0,
+      "status": "pass",
+      "iterations": 3,
+      "first_pass_iter": 1,
+      "best_speedup": 0.7309,
+      "total_tokens": 5504,
+      "fail_suspicious": 0,
+      "wall_s": 51.1,
+      "run_dir": "runs/p5/pilot1/eval/softmax/seed2/no_rsi/20261105-083454_softmax",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "matmul",
+      "seed": 1,
+      "group": "kb",
+      "rc": 0,
+      "status": "pass_unstable",
+      "iterations": 3,
+      "first_pass_iter": 1,
+      "best_speedup": 0.9519,
+      "total_tokens": 6203,
+      "fail_suspicious": 0,
+      "wall_s": 42.6,
+      "run_dir": "runs/p5/pilot1/eval/matmul/seed1/kb/20261105-083545_matmul",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "matmul",
+      "seed": 1,
+      "group": "no_rsi",
+      "rc": 0,
+      "status": "pass",
+      "iterations": 3,
+      "first_pass_iter": 1,
+      "best_speedup": 0.9979,
+      "total_tokens": 6313,
+      "fail_suspicious": 0,
+      "wall_s": 43.0,
+      "run_dir": "runs/p5/pilot1/eval/matmul/seed1/no_rsi/20261105-083627_matmul",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "matmul",
+      "seed": 2,
+      "group": "kb",
+      "rc": 0,
+      "status": "pass_unstable",
+      "iterations": 3,
+      "first_pass_iter": 1,
+      "best_speedup": 0.955,
+      "total_tokens": 6212,
+      "fail_suspicious": 0,
+      "wall_s": 40.1,
+      "run_dir": "runs/p5/pilot1/eval/matmul/seed2/kb/20261105-083710_matmul",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "matmul",
+      "seed": 2,
+      "group": "no_rsi",
+      "rc": 0,
+      "status": "pass_unstable",
+      "iterations": 3,
+      "first_pass_iter": 1,
+      "best_speedup": 1.0176,
+      "total_tokens": 5767,
+      "fail_suspicious": 0,
+      "wall_s": 54.1,
+      "run_dir": "runs/p5/pilot1/eval/matmul/seed2/no_rsi/20261105-083750_matmul",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "mla_attention",
+      "seed": 1,
+      "group": "kb",
+      "rc": 1,
+      "status": "fail_correctness",
+      "iterations": 3,
+      "first_pass_iter": 4,
+      "best_speedup": 0.0,
+      "total_tokens": 13431,
+      "fail_suspicious": 0,
+      "wall_s": 58.1,
+      "run_dir": "runs/p5/pilot1/eval/mla_attention/seed1/kb/20261105-083845_mla_attention",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "mla_attention",
+      "seed": 1,
+      "group": "no_rsi",
+      "rc": 0,
+      "status": "pass_unstable",
+      "iterations": 3,
+      "first_pass_iter": 1,
+      "best_speedup": 0.8451,
+      "total_tokens": 12903,
+      "fail_suspicious": 0,
+      "wall_s": 70.2,
+      "run_dir": "runs/p5/pilot1/eval/mla_attention/seed1/no_rsi/20261105-083943_mla_attention",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "mla_attention",
+      "seed": 2,
+      "group": "kb",
+      "rc": 1,
+      "status": "fail_correctness",
+      "iterations": 3,
+      "first_pass_iter": 4,
+      "best_speedup": 0.0,
+      "total_tokens": 12291,
+      "fail_suspicious": 0,
+      "wall_s": 59.9,
+      "run_dir": "runs/p5/pilot1/eval/mla_attention/seed2/kb/20261105-084053_mla_attention",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "mla_attention",
+      "seed": 2,
+      "group": "no_rsi",
+      "rc": 0,
+      "status": "pass",
+      "iterations": 3,
+      "first_pass_iter": 1,
+      "best_speedup": 0.6995,
+      "total_tokens": 11933,
+      "fail_suspicious": 0,
+      "wall_s": 59.5,
+      "run_dir": "runs/p5/pilot1/eval/mla_attention/seed2/no_rsi/20261105-084153_mla_attention",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "moe_permute",
+      "seed": 1,
+      "group": "kb",
+      "rc": 0,
+      "status": "pass_unstable",
+      "iterations": 1,
+      "first_pass_iter": 1,
+      "best_speedup": 11.9455,
+      "total_tokens": 2263,
+      "fail_suspicious": 0,
+      "wall_s": 26.3,
+      "run_dir": "runs/p5/pilot1/eval/moe_permute/seed1/kb/20261105-084252_moe_permute",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "moe_permute",
+      "seed": 1,
+      "group": "no_rsi",
+      "rc": 0,
+      "status": "pass",
+      "iterations": 1,
+      "first_pass_iter": 1,
+      "best_speedup": 12.8969,
+      "total_tokens": 1932,
+      "fail_suspicious": 0,
+      "wall_s": 26.5,
+      "run_dir": "runs/p5/pilot1/eval/moe_permute/seed1/no_rsi/20261105-084319_moe_permute",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "moe_permute",
+      "seed": 2,
+      "group": "kb",
+      "rc": 0,
+      "status": "pass_unstable",
+      "iterations": 1,
+      "first_pass_iter": 1,
+      "best_speedup": 11.9545,
+      "total_tokens": 2281,
+      "fail_suspicious": 0,
+      "wall_s": 25.6,
+      "run_dir": "runs/p5/pilot1/eval/moe_permute/seed2/kb/20261105-084345_moe_permute",
+      "stderr_tail": "",
+      "stage": "final"
+    },
+    {
+      "task": "moe_permute",
+      "seed": 2,
+      "group": "no_rsi",
+      "rc": 0,
+      "status": "pass_unstable",
+      "iterations": 1,
+      "first_pass_iter": 1,
+      "best_speedup": 12.1445,
+      "total_tokens": 1927,
+      "fail_suspicious": 0,
+      "wall_s": 26.4,
+      "run_dir": "runs/p5/pilot1/eval/moe_permute/seed2/no_rsi/20261105-084411_moe_permute",
+      "stderr_tail": "",
+      "stage": "final"
+    }
+  ],
+  "summary": {
+    "holdout_tasks": [
+      "softmax",
+      "matmul",
+      "mla_attention",
+      "moe_permute"
+    ],
+    "train_tasks": [
+      "vector_add",
+      "rmsnorm",
+      "decode_attention",
+      "grouped_matmul",
+      "moe_finalize_routing",
+      "rope",
+      "sdpa_attention",
+      "grouped_gemm_swiglu"
+    ],
+    "groups": {
+      "kb": {
+        "first_pass_iter": {
+          "n": 8,
+          "median": 1.0,
+          "ci": [
+            1.0,
+            4.0
+          ]
+        },
+        "best_speedup": {
+          "n": 8,
+          "median": 0.9534,
+          "ci": [
+            0.0,
+            11.9455
+          ]
+        },
+        "cost_per_gain": {
+          "n": 8,
+          "median": 633200.0,
+          "ci": [
+            208.2249,
+            1229100.0
+          ]
+        },
+        "tokens": {
+          "n": 8,
+          "median": 6332.0,
+          "ci": [
+            2281.0,
+            12291.0
+          ]
+        },
+        "passes": 5,
+        "n": 8,
+        "cheat_interceptions": 0
+      },
+      "no_rsi": {
+        "first_pass_iter": {
+          "n": 8,
+          "median": 1.0,
+          "ci": [
+            1.0,
+            1.0
+          ]
+        },
+        "best_speedup": {
+          "n": 8,
+          "median": 0.9215,
+          "ci": [
+            0.7309,
+            12.1445
+          ]
+        },
+        "cost_per_gain": {
+          "n": 8,
+          "median": 548250.0,
+          "ci": [
+            172.9104,
+            1193300.0
+          ]
+        },
+        "tokens": {
+          "n": 8,
+          "median": 5635.5,
+          "ci": [
+            1932.0,
+            11933.0
+          ]
+        },
+        "passes": 8,
+        "n": 8,
+        "cheat_interceptions": 0
+      }
+    },
+    "paired": {
+      "first_pass_improvement": {
+        "n": 8,
+        "median": 0.0,
+        "ci": [
+          -3.0,
+          0.0
+        ]
+      },
+      "best_speedup_improvement": {
+        "n": 8,
+        "median": -0.4448,
+        "ci": [
+          -0.8451,
+          -0.046
+        ]
+      },
+      "cost_per_gain_difference": {
+        "n": 8,
+        "median": 44300.0,
+        "ci": [
+          35.3145,
+          204800.0
+        ]
+      },
+      "pairs": 8
+    },
+    "negative_transfer": {
+      "tasks": [
+        {
+          "task": "matmul",
+          "kb": 0.9534499999999999,
+          "no_rsi": 1.0077500000000001,
+          "delta": -0.0543
+        },
+        {
+          "task": "mla_attention",
+          "kb": 0.0,
+          "no_rsi": 0.7723,
+          "delta": -0.7723
+        },
+        {
+          "task": "moe_permute",
+          "kb": 11.95,
+          "no_rsi": 12.520700000000001,
+          "delta": -0.5707
+        },
+        {
+          "task": "softmax",
+          "kb": 0.5005,
+          "no_rsi": 0.7422500000000001,
+          "delta": -0.2418
+        }
+      ],
+      "worse": [
+        "matmul",
+        "mla_attention",
+        "moe_permute",
+        "softmax"
+      ],
+      "rate": 1.0,
+      "threshold": 0.03
+    },
+    "pass_lines": {
+      "first_pass_or_best": false,
+      "first_pass": false,
+      "best_speedup": false,
+      "cost_not_worse": false,
+      "negative_transfer_ok": false
+    },
+    "train": {
+      "stages": [
+        {
+          "stage": 1,
+          "rc": 0,
+          "used_iters": 8,
+          "holdout_score": {
+            "before": {
+              "score": null,
+              "n_runs": 0,
+              "tasks": [
+                "matmul",
+                "rmsnorm",
+                "softmax",
+                "vector_add"
+              ]
+            },
+            "after": {
+              "score": null,
+              "n_runs": 0,
+              "tasks": [
+                "matmul",
+                "rmsnorm",
+                "softmax",
+                "vector_add"
+              ]
+            },
+            "epsilon": 0.01
+          }
+        }
+      ],
+      "kb_at_T": "runs/p5/pilot1/kb_at_T"
+    }
+  }
+}
