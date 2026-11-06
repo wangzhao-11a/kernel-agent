@@ -969,6 +969,196 @@ def run(x):
                for row in report.get("skipped") or []), report.get("skipped")
 
 
+def check_p4_synthetic_cap(tmp):
+    """P4.3: many cheap synthetic tasks cannot fill or inflate the plan."""
+    from rsi.evolve import build_plan
+
+    def make(name, synthetic):
+        return {"name": name, "path": os.path.join(tmp, "tasks", name + ".py"),
+                "kind": "python", "level": 1, "expected_speedup": 1.1,
+                "features": {"name": name, "tags": ["softmax", "reduction"],
+                             "op_class": "reduction", "dtypes": ["float32"]},
+                "op_class": "reduction", "dtypes": ["float32"], "tags": ["softmax"],
+                "synthetic": synthetic}
+
+    tasks = [make("real_%d" % i, False) for i in range(3)]
+    tasks += [make("synth_%d" % i, True) for i in range(12)]
+    plan = build_plan({"runs": [], "tasks": tasks}, top=3)
+    assert not [row for row in plan if row.get("synthetic")], plan
+    only_synth = build_plan({"runs": [], "tasks": [make("synth_only", True)]}, top=3)
+    assert len(only_synth) == 1 and only_synth[0]["synthetic"], only_synth
+    real_row = build_plan({"runs": [], "tasks": [make("real_one", False)]}, top=1)[0]
+    synth_row = build_plan({"runs": [], "tasks": [make("synth_one", True)]}, top=1)
+    assert synth_row and synth_row[0]["score"] < real_row["score"], (real_row, synth_row)
+
+
+def check_p4_version_rollback(tmp):
+    """P4.5: knowledge snapshots + holdout score drive the rollback."""
+    from rsi import version
+
+    root = os.path.join(tmp, "p4_v_kb")
+    os.makedirs(root)
+    write(os.path.join(root, "strategies.jsonl"),
+          json.dumps({"id": "stg-1", "statement": "before"}) + "\n")
+    before = version.snapshot(root, os.path.join(tmp, "p4_v_snaps"))
+    write(os.path.join(root, "strategies.jsonl"),
+          json.dumps({"id": "stg-2", "statement": "after"}) + "\n")
+    after = version.snapshot(root, os.path.join(tmp, "p4_v_snaps"))
+    assert before["version"] != after["version"]
+
+    def fake_run(name, speedup):
+        run_dir = os.path.join(tmp, name, "20260101-softmax")
+        write(os.path.join(run_dir, "meta.json"), json.dumps({
+            "task": "softmax", "device": "cpu", "hardware": "cpu",
+            "features": {}, "iterations": 1,
+            "best": {"status": "pass", "speedup": speedup},
+        }))
+        return os.path.join(tmp, name)
+
+    score_before = version.holdout_score(fake_run("p4_v_runs_before", 1.2), ["softmax"])
+    score_after = version.holdout_score(fake_run("p4_v_runs_after", 1.0), ["softmax"])
+    assert score_before["score"] == 1.2 and score_after["score"] == 1.0, (score_before, score_after)
+    result = version.rollback_if_worse(root, before, score_before, score_after, 0.01)
+    assert result["rolled_back"] is True, result
+    text = open(os.path.join(root, "strategies.jsonl"), encoding="utf-8").read()
+    assert "stg-1" in text and "stg-2" not in text, text
+
+
+def check_p4_auto_skill(tmp):
+    """P4.4: a strategy that becomes verified auto-compiles a twice-validated skill."""
+    from rsi.distill import distill_run
+    from rsi.memory import MemoryStore
+    from rsi.store import StrategyStore
+
+    task_path = os.path.join(tmp, "p4_auto_task", "p4_auto.py")
+    write(task_path, textwrap.dedent('''
+        import torch
+        TASK = {"name": "p4_auto", "level": 1,
+                "tolerance": {"atol": 1e-5, "rtol": 1e-5},
+                "num_trials": 2, "warmup": 5, "rep": 30,
+                "input_specs": [{"kind": "randn", "shape": [2048, 4096], "dtype": "float32"}],
+                "entrypoint": "run", "baseline": "eager", "tags": ["softmax", "reduction"]}
+        def reference(x):
+            m = x.max(dim=-1, keepdim=True).values
+            e = torch.exp(x - m)
+            return e / e.sum(dim=-1, keepdim=True)
+    '''))
+    root = os.path.join(tmp, "p4_auto_kb")
+    store = StrategyStore(root)
+    sid = store.find_by_key("block_tiling")["id"]
+    store.record_evidence(sid, "prior", "p4_auto", 1.4, "success",
+                          run_id="prior", hardware="cpu", dtype="float32")
+    assert store.strategies[sid]["confidence"] == "candidate"
+
+    run_dir = os.path.join(tmp, "p4_auto_run")
+    solution = write(os.path.join(run_dir, "solution.py"),
+                     "import torch\n\nTILE = 1\n\n\ndef run(x):\n    return torch.softmax(x, dim=-1)\n")
+    source = open(solution, encoding="utf-8").read()
+    features = {"name": "p4_auto", "tags": ["softmax", "reduction"],
+                "op_class": "reduction", "dtypes": ["float32"]}
+    meta = {"task": "p4_auto", "task_file": task_path, "device": "cpu",
+            "hardware": "cpu", "features": features,
+            "best": {"status": "pass", "speedup": 4.0, "path": solution}}
+    write(os.path.join(run_dir, "meta.json"), json.dumps(meta))
+    traj = {"task": "p4_auto", "task_file": task_path, "hardware": "cpu",
+            "device": "cpu", "features": features, "best": meta["best"],
+            "distilled": False,
+            "attempts": [
+                {"iter": 1, "status": "pass", "speedup": 4.0,
+                 "speedup_ci": [3.9, 4.1], "solution": solution,
+                 "solution_source": source, "epsilon": 0.043,
+                 "strategies_declared": ["block tiling"],
+                 "strategies_used": [sid], "distilled": False},
+                {"iter": "ablation:%s" % sid, "kind": "ablation", "ablation_of": sid,
+                 "status": "pass", "speedup": 0.5, "speedup_ci": [0.45, 0.55],
+                 "solution_source": source, "distilled": False},
+            ]}
+    write(os.path.join(run_dir, "trajectory.json"), json.dumps(traj))
+    report = distill_run(run_dir, store=store)
+    assert store.strategies[sid]["confidence"] == "verified", store.strategies[sid]
+    skills = report.get("skills") or []
+    assert skills and skills[0]["status"] == "compiled", report
+    assert skills[0]["confidence"] == "verified" and skills[0]["passes"] == 2, skills
+    memory = MemoryStore(root)
+    auto = [row for row in memory.skills if row.get("auto_generated")]
+    assert auto and auto[0]["confidence"] == "verified", memory.skills
+    assert (auto[0].get("validation") or {}).get("passes") == 2, auto[0]
+
+
+def check_p4_synth_and_schedule(tmp):
+    """P4.1 + P4.2: a real failure becomes a task and the scheduler runs it."""
+    root = ROOT
+    fail_kb = os.path.join(tmp, "p4_fail_kb")
+    fail_runs = os.path.join(tmp, "p4_fail_runs")
+    wrong = "def run(x, y):\n    return x - y\n"
+    replay_fail = write(os.path.join(tmp, "p4_fail_replay.json"), json.dumps({
+        "responses": [
+            {"action": "write_solution", "content": wrong, "strategies": [],
+             "expected_speedup": 2.0},
+            {"action": "finish", "summary": "failure generation"},
+        ]}))
+    proc = subprocess.run([
+        sys.executable, "-m", "agent.loop", "--task", os.path.join(root, "tasks", "level1", "vector_add.py"),
+        "--provider", "replay", "--replay-file", replay_fail, "--device", "cpu",
+        "--knowledge-root", fail_kb, "--out-dir", fail_runs,
+        "--max-iters", "1", "--profiler", "off", "--no-distill",
+        "--timeout", "300", "--quiet",
+    ], cwd=root, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=900)
+    failures = [json.loads(line) for line in
+                open(os.path.join(fail_kb, "failures.jsonl"), encoding="utf-8") if line.strip()]
+    assert failures and "x - y" in (failures[0]["minimal_repro"].get("code") or ""), failures
+
+    synth_out = os.path.join(tmp, "p4_tasks", "synth")
+    synth = subprocess.run([
+        sys.executable, "-m", "rsi.synth", "--failures", os.path.join(fail_kb, "failures.jsonl"),
+        "--tasks-root", os.path.join(root, "tasks"), "--out", synth_out,
+        "--approve", "--device", "cpu", "--timeout", "600",
+    ], cwd=root, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=1200)
+    assert synth.returncode == 0, (synth.stdout[-1500:] + "\n" + synth.stderr[-1500:])
+    task_files = glob.glob(os.path.join(synth_out, "*.py"))
+    assert task_files, synth_out
+    sidecar = json.load(open(os.path.splitext(task_files[0])[0] + ".json", encoding="utf-8"))
+    assert sidecar["approved"] is True and sidecar["validation"]["ok"] is True, sidecar
+
+    runs_root = os.path.join(tmp, "p4_sched_runs")
+    write(os.path.join(runs_root, "20260101-softmax", "meta.json"), json.dumps({
+        "task": "softmax", "device": "cpu", "hardware": "cpu", "features": {},
+        "iterations": 1, "best": {"status": "pass", "speedup": 1.2},
+    }))
+    good = "def run(x, y):\n    return x + y\n"
+    replay_good = write(os.path.join(tmp, "p4_sched_replay.json"), json.dumps({
+        "responses": [
+            {"action": "write_solution", "content": good, "strategies": [],
+             "expected_speedup": 1.0},
+            {"action": "finish", "summary": "scheduled"},
+        ]}))
+    sched_out = os.path.join(tmp, "p4_schedule")
+    sched = subprocess.run([
+        sys.executable, "-m", "rsi.schedule", "--budget-iters", "3",
+        "--approve", "auto", "--approve-synthetic", "--top", "1", "--seeds", "1",
+        "--variants", "base", "--max-iters", "2", "--target-speedup", "0.5",
+        "--provider", "replay", "--replay-file", replay_good, "--device", "cpu",
+        "--knowledge-root", os.path.join(tmp, "p4_sched_kb"),
+        "--runs-root", runs_root, "--tasks-root", os.path.join(tmp, "p4_tasks"),
+        "--holdout-config", os.path.join(root, "configs", "holdout.json"),
+        "--versions-root", os.path.join(tmp, "p4_versions"),
+        "--out", sched_out, "--timeout", "300",
+    ], cwd=root, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=1200)
+    assert sched.returncode == 0, (sched.stdout[-2000:] + "\n" + sched.stderr[-2000:])
+    audits = glob.glob(os.path.join(sched_out, "*", "audit.json"))
+    assert audits, sched_out
+    audit = json.load(open(audits[0], encoding="utf-8"))
+    assert audit["runs"], audit
+    assert all(row["task"].startswith("synth_") for row in audit["runs"]), audit["runs"]
+    assert audit["used_iters"] <= 3, audit
+    assert audit["holdout_score"]["before"]["score"] == 1.2, audit["holdout_score"]
+    assert audit["knowledge"]["before"]["id"] and audit["knowledge"]["after"]["id"], audit["knowledge"]
+    assert audit["knowledge"]["final_version"], audit["knowledge"]
+
+
 def check_adversarial_solutions(tmp):
     """Every cheat must be rejected; the honest control must still pass."""
     import statistics as stats_mod
@@ -1416,6 +1606,8 @@ def main():
     check("p3: calibration error down-weights retrieval", lambda: check_p3_retrieval_calibration(tmp))
     check("p3: exemplar behavior archive + descendant gain", lambda: check_p3_exemplar_archive(tmp))
     check("p3: evolve plan uses configured holdout", lambda: check_p3_evolve_holdout(tmp))
+    check("p4: synthetic tasks are capped in the plan", lambda: check_p4_synthetic_cap(tmp))
+    check("p4: knowledge snapshot/rollback + holdout score", lambda: check_p4_version_rollback(tmp))
     check("rsi: distill gate classifies neutral vs success", lambda: check_distill_gate(tmp))
     check("rsi: unstable attempts are skipped by distill", lambda: check_unstable_skipped(tmp))
     check("rsi: attribution precision (declarations resolve, prose ignored)", lambda: check_rsi_attribution_precision(tmp))
@@ -1433,6 +1625,8 @@ def main():
         check("rsi: loop records trajectory, distills, reuses priors", lambda: check_rsi_loop_distill(tmp))
         check("rsi: strict provenance blocks CPU evidence for ascend-910b", lambda: check_strict_provenance(tmp))
         check("p3: holdout measurement rejects train-only gains", lambda: check_p3_holdout_measurement(tmp))
+        check("p4: verified strategy auto-compiles a skill", lambda: check_p4_auto_skill(tmp))
+        check("p4: failure -> synthetic task -> scheduled cycle", lambda: check_p4_synth_and_schedule(tmp))
         check("p2: claimed-only declarations gain no evidence", lambda: check_p2_claimed_only(tmp))
         check("p2: ablation evidence gates success and combos", lambda: check_p2_ablation_end_to_end(tmp))
         check("p2: syntax errors do not count as strategy failures", lambda: check_p2_stage_failure(tmp))

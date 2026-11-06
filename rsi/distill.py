@@ -166,6 +166,7 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
         "claimed_only": [],
         "exemplar": None,
         "descendant_gain": [],
+        "skills": [],
     }
     prov = provenance({"device": traj.get("device"), "hardware": traj.get("hardware")})
     report["provenance"] = prov
@@ -334,6 +335,37 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
 
         attempt["distilled"] = True
 
+    # P4.4: a strategy that just became verified compiles its best solution into
+    # a parameterized skill; two independent harness runs validate the template.
+    if best and (best[0].get("solution_source") or "").strip() and traj.get("task_file"):
+        from rsi.memory import MemoryStore
+        from rsi.skills import auto_compile_from_run
+
+        memory = MemoryStore(store.root)
+        for sid in sorted(touched):
+            strategy = store.strategies.get(sid) or {}
+            if strategy.get("confidence") != "verified" or sid not in best[1]:
+                continue
+            task_file = traj.get("task_file") or ""
+            if not os.path.isfile(task_file):
+                continue
+            try:
+                result = auto_compile_from_run(
+                    memory, strategy, task_file, best[0]["solution_source"], feats,
+                    hardware, best[2], device=traj.get("device") or "cpu",
+                    source_ref=best[0].get("solution") or "")
+            except Exception as exc:
+                report["skills"].append({"strategy": sid, "status": "error",
+                                         "error": "%s: %s" % (type(exc).__name__, exc)})
+                continue
+            report["skills"].append({
+                "strategy": sid,
+                "status": result.get("status"),
+                "name": (result.get("skill") or {}).get("name"),
+                "confidence": (result.get("skill") or {}).get("confidence"),
+                "passes": result.get("passes"),
+            })
+
     if best and best[3] == "success" and len(best[1]) >= 2:
         contributions = best[4]
         missing = [sid for sid in best[1] if not contributions.get(sid)]
@@ -417,10 +449,15 @@ def main(argv=None) -> int:
         print("[%s] task=%s hardware=%s device_class=%s valid_evidence=%s replay_ok=%s" % (
             os.path.basename(run_dir.rstrip("/\\")), report["task"], report["hardware"],
             prov.get("device_class"), prov.get("valid"), report["replay_ok"]))
-        print("  evidence: %d | created: %d | combos: %d | refined: %d | skipped: %d | claimed_only: %d" % (
+        print("  evidence: %d | created: %d | combos: %d | refined: %d | skipped: %d | "
+              "skills: %d | claimed_only: %d" % (
             len(report["evidence"]), len(report["created"]), len(report["combos"]),
-            len(report["refined"]), len(report["skipped"]), len(report["claimed_only"])))
-        for row in report["claimed_only"][:3]:
+            len(report["refined"]), len(report["skipped"]), len(report.get("skills") or []),
+            len(report.get("claimed_only") or [])))
+        for row in (report.get("skills") or [])[:3]:
+            print("    skill %s: %s (%s, passes=%s)" % (
+                row.get("name"), row.get("status"), row.get("confidence"), row.get("passes")))
+        for row in (report.get("claimed_only") or [])[:3]:
             print("    claimed-only iter=%s: %s" % (row.get("iter"), ", ".join(row.get("strategies") or [])))
         for row in report["skipped"][:3]:
             print("    skipped iter=%s: %s" % (row.get("iter"), row.get("reason")))
