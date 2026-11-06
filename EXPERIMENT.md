@@ -43,6 +43,17 @@ Paired (task × seed): best-speedup `kb - no_rsi = +0.0055`, 95% CI `[-0.0397, 0
 
 Negative transfer (threshold 0.03): **0/4** — matmul -0.0206, MLA -0.0037, moe_permute +0.7366, softmax +0.0048.
 
+## Hard-operator end-to-end (post-integration, MLA attention)
+
+After merging P0–P4 into `main` (`17a5e66`), a real-model end-to-end run on the hard `mla_attention` task (m18 Ascend910B4, `deepseek-chat`, temperature 0.7, 16 iterations, fresh knowledge root, P2 ablation budget 3):
+
+- **Stable best: 1.2678x**, ABAB 95% CI `[1.2648, 1.2956]`, stability 0.61%. An unstable 1.3428x result appeared earlier; the stable pass is selected (fix #9) so evidence-producing paths use the stable solution.
+- **P2 ablation gate:** removing the two declared strategies produced **1.3509x** and **1.3661x** — both *faster* than the full 1.2678x solution. The declarations were therefore not causal; the success evidence was correctly demoted to neutral.
+- Consequences: 0 verified strategies, 0 combos, 0 auto-compiled skills; 1 exemplar recorded. 0 cheat interceptions; provenance valid.
+- Raw data: [`data/e2e/mla-20261106-runB1.json`](data/e2e/mla-20261106-runB1.json) (attempts, ablations, distill summary, final solution).
+
+This validates the integrated pipeline on a hard operator and shows the P2/P4 gates doing their job: a real 1.27x win with non-causal declarations is **not** turned into strategy evidence or a skill.
+
 ## Combined learning curve (training budget → holdout outcome)
 
 | budget | group | best speedup median | paired best delta vs no_rsi (95% CI) | paired first-pass delta (95% CI) | negative transfer |

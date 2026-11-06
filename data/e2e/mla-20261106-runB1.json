@@ -1,0 +1,455 @@
+{
+  "schema_version": 1,
+  "kind": "e2e-hard-operator",
+  "task": "mla_attention",
+  "device": "npu",
+  "hardware": "ascend-910b",
+  "model": "deepseek-chat",
+  "provider": "openai",
+  "iterations": 16,
+  "best": {
+    "status": "pass",
+    "speedup": 1.2678,
+    "path": "runs/e2e/runB1/20261106-175151_mla_attention/solution_iter12.py",
+    "uses_triton": false
+  },
+  "ablations": [
+    {
+      "strategy": "stg-0001",
+      "status": "pass_unstable",
+      "speedup": 1.3509,
+      "speedup_ci": [
+        1.2997,
+        1.371
+      ],
+      "stability_delta": 0.0163
+    },
+    {
+      "strategy": "stg-0005",
+      "status": "pass_unstable",
+      "speedup": 1.3661,
+      "speedup_ci": [
+        1.3619,
+        1.4006
+      ],
+      "stability_delta": 0.0123
+    }
+  ],
+  "distill": {
+    "evidence": 11,
+    "created": 0,
+    "combos": 0,
+    "refined": 0,
+    "skipped": 6,
+    "replay_ok": null,
+    "provenance_valid": true
+  },
+  "attempts": [
+    {
+      "iter": 1,
+      "kind": null,
+      "ablation_of": null,
+      "status": "fail_correctness",
+      "speedup": 0.0,
+      "speedup_ci": null,
+      "stability_delta": null,
+      "epsilon": null,
+      "unstable": false,
+      "strategies_declared": [
+        "stg-0009",
+        "stg-0001",
+        "stg-0002"
+      ],
+      "strategies_used": [
+        "stg-0009",
+        "stg-0001",
+        "stg-0002"
+      ],
+      "holdout_ok": null,
+      "error": "trial 0: solution raised RuntimeError: The size of tensor a (512) must match the size of tensor b (96) at non-singleton dimension 0"
+    },
+    {
+      "iter": 2,
+      "kind": null,
+      "ablation_of": null,
+      "status": "fail_correctness",
+      "speedup": 0.0,
+      "speedup_ci": null,
+      "stability_delta": null,
+      "epsilon": null,
+      "unstable": false,
+      "strategies_declared": [
+        "stg-0009",
+        "stg-0001"
+      ],
+      "strategies_used": [
+        "stg-0009",
+        "stg-0001"
+      ],
+      "holdout_ok": null,
+      "error": "trial 0: solution raised RuntimeError: einsum(): subscript h has size 96 for operand 1 which does not broadcast with previously seen size 8"
+    },
+    {
+      "iter": 3,
+      "kind": null,
+      "ablation_of": null,
+      "status": "fail_correctness",
+      "speedup": 0.0,
+      "speedup_ci": null,
+      "stability_delta": null,
+      "epsilon": null,
+      "unstable": false,
+      "strategies_declared": [
+        "stg-0009",
+        "stg-0001"
+      ],
+      "strategies_used": [
+        "stg-0009",
+        "stg-0001"
+      ],
+      "holdout_ok": null,
+      "error": "trial 0: solution raised RuntimeError: einsum(): subscript h has size 96 for operand 1 which does not broadcast with previously seen size 8"
+    },
+    {
+      "iter": 4,
+      "kind": null,
+      "ablation_of": null,
+      "status": "fail_correctness",
+      "speedup": 0.0,
+      "speedup_ci": null,
+      "stability_delta": null,
+      "epsilon": null,
+      "unstable": false,
+      "strategies_declared": [
+        "stg-0009",
+        "stg-0001"
+      ],
+      "strategies_used": [
+        "stg-0009",
+        "stg-0001"
+      ],
+      "holdout_ok": null,
+      "error": "trial 0: solution raised RuntimeError: einsum(): subscript h has size 96 for operand 1 which does not broadcast with previously seen size 8"
+    },
+    {
+      "iter": 5,
+      "kind": null,
+      "ablation_of": null,
+      "status": "fail_correctness",
+      "speedup": 0.0,
+      "speedup_ci": null,
+      "stability_delta": null,
+      "epsilon": null,
+      "unstable": false,
+      "strategies_declared": [
+        "stg-0009",
+        "stg-0001"
+      ],
+      "strategies_used": [
+        "stg-0009",
+        "stg-0001"
+      ],
+      "holdout_ok": null,
+      "error": "trial 0: solution raised RuntimeError: einsum(): subscript h has size 96 for operand 1 which does not broadcast with previously seen size 8"
+    },
+    {
+      "iter": 6,
+      "kind": null,
+      "ablation_of": null,
+      "status": "fail_correctness",
+      "speedup": 0.0,
+      "speedup_ci": null,
+      "stability_delta": null,
+      "epsilon": null,
+      "unstable": false,
+      "strategies_declared": [
+        "stg-0009"
+      ],
+      "strategies_used": [
+        "stg-0009"
+      ],
+      "holdout_ok": null,
+      "error": "trial 0: solution raised RuntimeError: einsum(): subscript h has size 96 for operand 1 which does not broadcast with previously seen size 8"
+    },
+    {
+      "iter": 7,
+      "kind": null,
+      "ablation_of": null,
+      "status": "pass_unstable",
+      "speedup": 0.8064,
+      "speedup_ci": [
+        0.7832,
+        0.8415
+      ],
+      "stability_delta": 0.0132,
+      "epsilon": 0.0085,
+      "unstable": true,
+      "strategies_declared": [
+        "stg-0009"
+      ],
+      "strategies_used": [
+        "stg-0009"
+      ],
+      "holdout_ok": null,
+      "error": null
+    },
+    {
+      "iter": 8,
+      "kind": null,
+      "ablation_of": null,
+      "status": "fail_correctness",
+      "speedup": 0.0,
+      "speedup_ci": null,
+      "stability_delta": null,
+      "epsilon": null,
+      "unstable": false,
+      "strategies_declared": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "strategies_used": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "holdout_ok": null,
+      "error": "trial 0: output 0 shape mismatch: reference (128, 8, 64) vs solution (128, 8, 96)"
+    },
+    {
+      "iter": 9,
+      "kind": null,
+      "ablation_of": null,
+      "status": "pass_unstable",
+      "speedup": 1.1529,
+      "speedup_ci": [
+        1.1184,
+        1.2063
+      ],
+      "stability_delta": 0.0095,
+      "epsilon": 0.0085,
+      "unstable": true,
+      "strategies_declared": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "strategies_used": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "holdout_ok": null,
+      "error": null
+    },
+    {
+      "iter": 12,
+      "kind": null,
+      "ablation_of": null,
+      "status": "pass",
+      "speedup": 1.2678,
+      "speedup_ci": [
+        1.2648,
+        1.2956
+      ],
+      "stability_delta": 0.0061,
+      "epsilon": 0.0085,
+      "unstable": false,
+      "strategies_declared": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "strategies_used": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "holdout_ok": null,
+      "error": null
+    },
+    {
+      "iter": 13,
+      "kind": null,
+      "ablation_of": null,
+      "status": "pass_unstable",
+      "speedup": 1.1118,
+      "speedup_ci": [
+        1.0919,
+        1.1652
+      ],
+      "stability_delta": 0.0179,
+      "epsilon": 0.0085,
+      "unstable": true,
+      "strategies_declared": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "strategies_used": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "holdout_ok": null,
+      "error": null
+    },
+    {
+      "iter": 14,
+      "kind": null,
+      "ablation_of": null,
+      "status": "pass_unstable",
+      "speedup": 1.2804,
+      "speedup_ci": [
+        1.2599,
+        1.3109
+      ],
+      "stability_delta": 0.0141,
+      "epsilon": 0.0085,
+      "unstable": true,
+      "strategies_declared": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "strategies_used": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "holdout_ok": null,
+      "error": null
+    },
+    {
+      "iter": 15,
+      "kind": null,
+      "ablation_of": null,
+      "status": "pass_unstable",
+      "speedup": 1.3428,
+      "speedup_ci": [
+        1.2923,
+        1.3619
+      ],
+      "stability_delta": 0.0127,
+      "epsilon": 0.0085,
+      "unstable": true,
+      "strategies_declared": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "strategies_used": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "holdout_ok": null,
+      "error": null
+    },
+    {
+      "iter": 16,
+      "kind": null,
+      "ablation_of": null,
+      "status": "fail_correctness",
+      "speedup": 0.0,
+      "speedup_ci": null,
+      "stability_delta": null,
+      "epsilon": null,
+      "unstable": false,
+      "strategies_declared": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "strategies_used": [
+        "stg-0001",
+        "stg-0002",
+        "stg-0005"
+      ],
+      "holdout_ok": null,
+      "error": "trial 0: output 0: 65396/65536 elements exceed tolerance (max_abs_err=6.112e-01, atol=2.0e-04, rtol=2.0e-04)"
+    },
+    {
+      "iter": "ablation:stg-0001",
+      "kind": "ablation",
+      "ablation_of": "stg-0001",
+      "status": "pass_unstable",
+      "speedup": 1.3509,
+      "speedup_ci": [
+        1.2997,
+        1.371
+      ],
+      "stability_delta": 0.0163,
+      "epsilon": 0.0085,
+      "unstable": true,
+      "strategies_declared": [],
+      "strategies_used": [],
+      "holdout_ok": null,
+      "error": null
+    },
+    {
+      "iter": "ablation:stg-0005",
+      "kind": "ablation",
+      "ablation_of": "stg-0005",
+      "status": "pass_unstable",
+      "speedup": 1.3661,
+      "speedup_ci": [
+        1.3619,
+        1.4006
+      ],
+      "stability_delta": 0.0123,
+      "epsilon": 0.0085,
+      "unstable": true,
+      "strategies_declared": [],
+      "strategies_used": [],
+      "holdout_ok": null,
+      "error": null
+    }
+  ],
+  "strategies_with_evidence": [
+    {
+      "id": "stg-0001",
+      "key": "online_softmax",
+      "confidence": "seed",
+      "stats": {
+        "applied": 3,
+        "succeeded": 0,
+        "failed": 2,
+        "regressed": 0,
+        "neutral": 1,
+        "ema_speedup": 1.2678,
+        "calibration_mae": 0.3322
+      }
+    },
+    {
+      "id": "stg-0005",
+      "key": "vectorized_access",
+      "confidence": "seed",
+      "stats": {
+        "applied": 2,
+        "succeeded": 0,
+        "failed": 1,
+        "regressed": 0,
+        "neutral": 1,
+        "ema_speedup": 1.2678,
+        "calibration_mae": 0.3322
+      }
+    },
+    {
+      "id": "stg-0009",
+      "key": "mla_absorption",
+      "confidence": "seed",
+      "stats": {
+        "applied": 6,
+        "succeeded": 0,
+        "failed": 6,
+        "regressed": 0,
+        "neutral": 0,
+        "ema_speedup": null,
+        "calibration_mae": null
+      }
+    }
+  ],
+  "skills": [],
+  "final_solution": "import math\n\nimport torch\n\nT, HID, HEADS = 128, 512, 8\nDN, DR, DKV, DV = 64, 32, 96, 64\n\n_HAS_TRITON = False\ntry:\n    import triton\n    import triton.language as tl\n    _HAS_TRITON = True\nexcept Exception:\n    _HAS_TRITON = False\n\n\nif _HAS_TRITON:\n    @triton.jit\n    def _mla_kernel(\n        QN_ptr, QP_ptr, KN_ptr, KP_ptr, V_ptr, O_ptr,\n        scale,\n        T: tl.constexpr, H: tl.constexpr, DN: tl.constexpr, DR: tl.constexpr, DV: tl.constexpr,\n        BLOCK_T: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_P: tl.constexpr, BLOCK_V: tl.constexpr,\n    ):\n        h = tl.program_id(0)\n        pid_t = tl.program_id(1)\n        offs_t = pid_t * BLOCK_T + tl.arange(0, BLOCK_T)\n        offs_n = tl.arange(0, BLOCK_N)\n        offs_p = tl.arange(0, BLOCK_P)\n        offs_v = tl.arange(0, BLOCK_V)\n        t_mask = offs_t < T\n        n_mask = offs_n < DN\n        p_mask = offs_p < DR\n        v_mask = offs_v < DV\n        offs_j = tl.arange(0, T)\n\n        # q_nope (BT, DN), q_pe (BT, DR)\n        qn = tl.load(QN_ptr + (offs_t[:, None] * H * DN + h * DN + offs_n[None, :]),\n                     mask=t_mask[:, None] & n_mask[None, :], other=0.0)\n        qp = tl.load(QP_ptr + (offs_t[:, None] * H * DR + h * DR + offs_p[None, :]),\n                     mask=t_mask[:, None] & p_mask[None, :], other=0.0)\n\n        # k_nope^T (DN, T), k_pe^T (DR, T)  (shared across heads for pe)\n        knT = tl.load(KN_ptr + (offs_j[None, :] * H * DN + h * DN + offs_n[:, None]),\n                      mask=n_mask[:, None], other=0.0)\n        kpT = tl.load(KP_ptr + (offs_j[None, :] * DR + offs_p[:, None]),\n                      mask=p_mask[:, None], other=0.0)\n\n        scores = tl.dot(qn, knT) + tl.dot(qp, kpT)\n        scores = scores * scale\n        m = tl.max(scores, axis=1)\n        p = tl.exp(scores - m[:, None])\n        l = tl.sum(p, axis=1)\n        p = p / l[:, None]\n\n        v = tl.load(V_ptr + (offs_j[:, None] * H * DV + h * DV + offs_v[None, :]),\n                    mask=v_mask[None, :], other=0.0)\n        out = tl.dot(p.to(v.dtype), v)\n        tl.store(O_ptr + (offs_t[:, None] * H * DV + h * DV + offs_v[None, :]),\n                 out, mask=t_mask[:, None] & v_mask[None, :])\n\n\ndef _triton_attn(q_nope, q_pe, k_nope, k_pe, v):\n    Tn, Hn, DN = q_nope.shape\n    DR = q_pe.shape[-1]\n    DV = v.shape[-1]\n    o = torch.empty((Tn, Hn, DV), dtype=v.dtype, device=v.device)\n    BLOCK_T = 32\n    BLOCK_N = triton.next_power_of_2(DN)\n    BLOCK_P = triton.next_power_of_2(DR)\n    BLOCK_V = triton.next_power_of_2(DV)\n    grid = (Hn, triton.cdiv(Tn, BLOCK_T))\n    scale = 1.0 / math.sqrt(DN + DR)\n    _mla_kernel[grid](q_nope, q_pe, k_nope, k_pe, v, o, scale,\n                      Tn, Hn, DN, DR, DV, BLOCK_T, BLOCK_N, BLOCK_P, BLOCK_V)\n    return o\n\n\ndef run(x, w_q_nope, w_q_pe, w_dkv, w_kr, w_uk, w_uv):\n    q_nope = (x @ w_q_nope).view(T, HEADS, DN)\n    q_pe = (x @ w_q_pe).view(T, HEADS, DR)\n    c_kv = x @ w_dkv\n    k_pe = x @ w_kr\n    k_nope = (c_kv @ w_uk).view(T, HEADS, DN)\n    v = (c_kv @ w_uv).view(T, HEADS, DV)\n\n    if x.device.type != \"cpu\" and _HAS_TRITON:\n        return _triton_attn(q_nope.contiguous(), q_pe.contiguous(),\n                            k_nope.contiguous(), k_pe.contiguous(), v.contiguous())\n\n    k_pe_h = k_pe.unsqueeze(1).expand(T, HEADS, DR)\n    scores = torch.einsum(\"ihd,jhd->hij\", q_nope, k_nope) + torch.einsum(\"ihd,jd->hij\", q_pe, k_pe)\n    probs = torch.softmax(scores * (1.0 / math.sqrt(DN + DR)), dim=-1)\n    return torch.einsum(\"hij,jhd->ihd\", probs, v)\n"
+}
