@@ -143,14 +143,18 @@ def benchmark(fn, inputs=None, device: str = "cpu", warmup: int = 25, rep: int =
             # Global sync on both sides: the flush and any work from earlier
             # iterations are drained before t0, and every stream launched by the
             # candidate is awaited inside the timed window.
+            #
+            # The audited window must bracket exactly the same span as the real
+            # one: ending it before the trailing sync would compare launch
+            # overhead against real device time and flag every iteration.
             if buf is not None:
                 buf.zero_()
             dev.sync(device)
             t0 = _PERF_COUNTER()
             a0 = time.perf_counter()
             fn(*sets[i % len(sets)])
-            a1 = time.perf_counter()
             dev.sync(device)
+            a1 = time.perf_counter()
             t1 = _PERF_COUNTER()
         else:
             if buf is not None:

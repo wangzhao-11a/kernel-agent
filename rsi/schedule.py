@@ -73,9 +73,44 @@ def _holdout_eval(args, knowledge_root: str, task_paths, out_dir: str) -> dict:
         return {"score": None, "metric": "skipped", "n_tasks": 0, "tasks": {},
                 "reason": "holdout evaluation disabled" if args.skip_holdout_eval
                           else "no holdout tasks configured"}
+
+    def runner(task_path, kb_root, seed, run_dir, max_iters=4, timeout=900.0):
+        # Reuse the cycle's provider/model/device settings: the default runner
+        # reads them from the environment, which the scheduler does not set.
+        return _run_agent_for_holdout(args, task_path, kb_root, run_dir,
+                                      max_iters, timeout)
+
     return version.evaluate_holdout(
-        knowledge_root, task_paths, out_dir, seeds=args.holdout_eval_seeds,
-        max_iters=args.holdout_eval_iters, timeout=args.timeout)
+        knowledge_root, task_paths, out_dir, runner=runner,
+        seeds=args.holdout_eval_seeds, max_iters=args.holdout_eval_iters,
+        timeout=args.timeout)
+
+
+def _run_agent_for_holdout(args, task_path: str, knowledge_root: str, run_dir: str,
+                           max_iters: int, timeout: float) -> dict:
+    os.makedirs(run_dir, exist_ok=True)
+    cmd = [
+        sys.executable, "-m", "agent.loop", "--task", task_path,
+        "--provider", args.provider, "--model", args.model,
+        "--base-url", args.base_url, "--api-key-env", args.api_key_env,
+        "--device", args.device, "--knowledge-root", knowledge_root,
+        "--out-dir", run_dir, "--max-iters", str(max(1, int(max_iters))),
+        "--timeout", str(timeout), "--profiler", "off", "--no-distill", "--quiet",
+    ]
+    if args.replay_file:
+        cmd += ["--replay-file", args.replay_file]
+    try:
+        subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=timeout + 240)
+    except subprocess.TimeoutExpired:
+        return {"status": "timeout", "speedup": 0.0}
+    metas = glob.glob(os.path.join(run_dir, "*", "meta.json"))
+    if not metas:
+        return {"status": "no_meta", "speedup": 0.0}
+    meta = read_json(sorted(metas)[-1])
+    best = meta.get("best") or {}
+    return {"status": best.get("status"), "speedup": float(best.get("speedup") or 0.0),
+            "task": meta.get("task")}
 
 
 def _approval(args, task_path: str, seed: int, variant: str):
