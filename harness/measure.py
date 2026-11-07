@@ -41,6 +41,7 @@ def ab_benchmark(solution_fn, baseline_fn, input_sets, device: str,
     dev.sync(device)
 
     per_round = []
+    clock_anomalies = 0
     for r in range(rounds):
         order = ("baseline", "solution") if r % 2 == 0 else ("solution", "baseline")
         measured = {}
@@ -49,6 +50,7 @@ def ab_benchmark(solution_fn, baseline_fn, input_sets, device: str,
             measured[name] = bench.benchmark(
                 fn, input_sets=sets, device=device, warmup=ROUND_WARMUP,
                 rep=per_round_rep, flush_l2=flush_l2, perturb=perturb)
+            clock_anomalies += int(measured[name].get("clock_anomalies") or 0)
         base_ms = measured["baseline"]["median_ms"]
         sol_ms = measured["solution"]["median_ms"]
         speedup = base_ms / sol_ms if sol_ms > 0 else 0.0
@@ -68,6 +70,7 @@ def ab_benchmark(solution_fn, baseline_fn, input_sets, device: str,
     stability = (statistics.pstdev(sol_medians) / sol_median
                  if len(sol_medians) > 1 and sol_median > 0 else 0.0)
     return {
+        "clock_anomalies": clock_anomalies,
         "speedup": round(float(statistics.median(speedups)), 4),
         "speedup_ci": [round(float(x), 4) for x in stats_mod.bootstrap_ci(speedups)],
         "n_rounds": rounds,

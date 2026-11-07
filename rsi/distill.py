@@ -206,12 +206,16 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
             return {"performed": False, "without_speedup_ci": None}, False
         without_ci = row.get("speedup_ci")
         status = row.get("status")
+        valid = row.get("ablation_valid", True)
         performed = bool(status in ("pass", "pass_unstable") and without_ci
-                         and len(without_ci) >= 2)
-        contributed = bool(status == "pass" and full_ci and len(full_ci) >= 2
+                         and len(without_ci) >= 2 and valid)
+        contributed = bool(status in ("pass", "pass_unstable") and full_ci
+                           and len(full_ci) >= 2
                            and float(without_ci[1]) < float(full_ci[0]))
         return ({
             "performed": bool(performed),
+            "valid": bool(valid),
+            "problem": row.get("ablation_problem") or "",
             "without_speedup": row.get("speedup"),
             "without_speedup_ci": without_ci,
             "status": status,
@@ -235,16 +239,18 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
         attempt_epsilon = attempt.get("epsilon")
         eps = float(attempt_epsilon) if attempt_epsilon is not None else epsilon
         if status == "pass_unstable":
-            report["skipped"].append({
+            # Instability widens the CI (the worker already did that); it does not
+            # throw the attempt away.  A lower bound above 1 + epsilon is still
+            # evidence, so it is distilled like any other pass.
+            report.setdefault("unstable_kept", []).append({
                 "iter": attempt.get("iter"),
-                "reason": "unstable measurement (stability_delta=%s, epsilon=%s)"
-                          % (attempt.get("stability_delta"), eps),
+                "stability_delta": attempt.get("stability_delta"),
+                "epsilon": eps,
             })
-            continue
         # P2.3: only correctness failures and significant regressions are strategy
         # failures.  Build/import/JSON/evaluator errors go to failure memory, not
         # to the strategy statistics.
-        if status not in ("pass", "fail_correctness"):
+        if status not in ("pass", "pass_unstable", "fail_correctness"):
             report["skipped"].append({
                 "iter": attempt.get("iter"),
                 "reason": "stage failure (%s): not attributed to strategies" % status,
@@ -278,11 +284,11 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
         else:
             used = attribute_from_source(source, store, feats)
         full_ci = attempt.get("speedup_ci")
-        if status != "pass":
+        if status not in ("pass", "pass_unstable"):
             outcome = "failure"
         else:
             outcome = classify(full_ci, eps)
-        is_best = bool(best_path and status == "pass"
+        is_best = bool(best_path and status in ("pass", "pass_unstable")
                        and os.path.abspath(str(attempt.get("solution") or "")) == best_path)
         contributions = {}
         for sid in used:
@@ -295,7 +301,7 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
             sid_outcome = "neutral" if (outcome == "success" and not contributed) else outcome
             contributions[sid] = contributed
             store.record_evidence(sid, traj_ref, traj.get("task") or "",
-                                  speedup if status == "pass" else 0.0,
+                                  speedup if status in ("pass", "pass_unstable") else 0.0,
                                   sid_outcome, expected_speedup=expected, hardware=hardware,
                                   dtype=dtype, run_id=run_id, ablation=ablation,
                                   holdout_ok=attempt.get("holdout_ok"),
@@ -316,7 +322,7 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
         # new strategy clears the stricter 1 + 2*epsilon promotion floor).  It is
         # a candidate: without an ablation it cannot claim a success yet.
         promote_floor = promotion_floor(eps)
-        if (status == "pass" and promote_floor is not None
+        if (status in ("pass", "pass_unstable") and promote_floor is not None
                 and full_ci
                 and float(full_ci[0]) > promote_floor):
             for name in declared_for_resolution:

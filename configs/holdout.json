@@ -1,25 +1,123 @@
 {
   "schema_version": 1,
-  "note": "Holdout shapes are used only for promotion checks. The agent's training timing never uses them, and they are not part of the task prompt.",
+  "note": "Holdout cases are used only for promotion checks. The agent's training timing never uses them and they are not part of the task prompt. Two forms: 'shapes' overrides input_specs shapes; 'constants' overrides module-level shape constants for tasks with a custom make_inputs().",
   "tasks": {
     "softmax": {
       "cases": [
-        {"name": "holdout-1024x4096", "shapes": [[1024, 4096]]}
+        {
+          "name": "holdout-1024x4096",
+          "shapes": [
+            [
+              1024,
+              4096
+            ]
+          ]
+        }
       ]
     },
     "rmsnorm": {
       "cases": [
-        {"name": "holdout-1024x4096", "shapes": [[1024, 4096], [4096]]}
+        {
+          "name": "holdout-1024x4096",
+          "shapes": [
+            [
+              1024,
+              4096
+            ],
+            [
+              4096
+            ]
+          ]
+        }
       ]
     },
     "vector_add": {
       "cases": [
-        {"name": "holdout-524288", "shapes": [[524288], [524288]]}
+        {
+          "name": "holdout-524288",
+          "shapes": [
+            [
+              524288
+            ],
+            [
+              524288
+            ]
+          ]
+        }
       ]
     },
     "matmul": {
       "cases": [
-        {"name": "holdout-1024", "shapes": [[1024, 1024], [1024, 1024]]}
+        {
+          "name": "holdout-512",
+          "shapes": [
+            [
+              512,
+              512
+            ],
+            [
+              512,
+              512
+            ]
+          ]
+        }
+      ]
+    },
+    "mla_attention": {
+      "cases": [
+        {
+          "name": "holdout-T64-DKV128",
+          "constants": {
+            "T": 64
+          }
+        }
+      ]
+    },
+    "moe_permute": {
+      "cases": [
+        {
+          "name": "holdout-T512",
+          "constants": {
+            "T_TOK": 512
+          }
+        }
+      ]
+    },
+    "decode_attention": {
+      "cases": [
+        {
+          "name": "holdout-S2048",
+          "constants": {
+            "S": 2048
+          }
+        }
+      ]
+    },
+    "sdpa_attention": {
+      "cases": [
+        {
+          "name": "holdout-S256",
+          "shapes": [
+            [
+              4,
+              8,
+              256,
+              64
+            ],
+            [
+              4,
+              8,
+              256,
+              64
+            ],
+            [
+              4,
+              8,
+              256,
+              64
+            ]
+          ]
+        }
       ]
     }
   }

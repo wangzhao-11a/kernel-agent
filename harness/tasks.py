@@ -25,6 +25,7 @@ executes anything else from the task module.
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -84,23 +85,49 @@ class Task:
         )
 
     def holdout_inputs(self, case: dict, device: str, trial: int):
-        """Inputs for one holdout case; requires TASK['input_specs'].
+        """Inputs for one holdout case.
 
-        Holdout shapes live in configs/holdout.json (not in the task source), so
-        the agent's prompt and training loop never see them.
+        Holdout cases live in configs/holdout.json (not in the task source), so the
+        agent's prompt and training loop never see them.  Two forms:
+
+        - ``{"shapes": [...]}``: overrides `input_specs` shapes (spec-based tasks);
+        - ``{"constants": {"T": 64}}``: overrides module-level shape constants for
+          the duration of the call (tasks with a custom ``make_inputs``).
         """
-        if not self.input_specs:
-            raise TaskLoadError(
-                "task %s has custom make_inputs(); holdout shapes cannot be injected" % self.path)
-        shapes = list((case or {}).get("shapes") or [])
-        specs = []
-        for index, spec in enumerate(self.input_specs):
-            item = dict(spec)
-            if shapes:
+        case = case or {}
+        shapes = list(case.get("shapes") or [])
+        if self.input_specs and shapes:
+            specs = []
+            for index, spec in enumerate(self.input_specs):
+                item = dict(spec)
                 shape = shapes[index] if index < len(shapes) else shapes[-1]
                 item["shape"] = list(shape)
-            specs.append(item)
-        return _inputs_from_specs(specs, device, 10000 + int(trial))
+                specs.append(item)
+            return _inputs_from_specs(specs, device, 10000 + int(trial))
+        with self.holdout_constants(case):
+            fn = getattr(self.module, "make_inputs", None)
+            if not callable(fn):
+                raise TaskLoadError(
+                    "task %s defines neither input_specs nor make_inputs() for holdout" % self.path)
+            return tuple(fn(device, 10000 + int(trial)))
+
+    @contextlib.contextmanager
+    def holdout_constants(self, case: dict):
+        """Temporarily apply a holdout case's module constants (e.g. T=64)."""
+        constants = dict((case or {}).get("constants") or {})
+        if not constants:
+            yield
+            return
+        saved = {}
+        for name, value in constants.items():
+            if hasattr(self.module, name):
+                saved[name] = getattr(self.module, name)
+                setattr(self.module, name, value)
+        try:
+            yield
+        finally:
+            for name, value in saved.items():
+                setattr(self.module, name, value)
 
 
 def _holdout_cases(task_name: str, holdout_config: str = None) -> list:

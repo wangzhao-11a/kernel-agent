@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import math
 import os
 import shutil
 import statistics
@@ -215,23 +216,60 @@ def _median_ci(values) -> dict:
             "ci": [round(x, 4) for x in stats_mod.bootstrap_ci(vals)]}
 
 
+SPEEDUP_FLOOR = 1e-2  # log floor for a failed run (avoids log(0))
+
+
+def _log_speedup(speedup) -> float:
+    return math.log(max(float(speedup or 0.0), SPEEDUP_FLOOR))
+
+
+def _cost_per_gain(row) -> float:
+    """Tokens per unit of log gain; undefined (None) when the run has no gain."""
+    speedup = float(row.get("best_speedup") or 0.0)
+    if speedup <= 1.0:
+        return None
+    gain = math.log(speedup)
+    if gain <= 0:
+        return None
+    return float(row.get("total_tokens") or 0.0) / gain
+
+
+def _median_or_none(values):
+    clean = [v for v in values if v is not None]
+    if not clean:
+        return None
+    return float(statistics.median(clean))
+
+
 def _paired(rows: list) -> dict:
+    """Per task x seed: log(speedup) ratio and first-pass iteration difference.
+
+    A log ratio is scale-free, so a 12x task cannot swamp a 1.1x task when the
+    pairs are pooled, and it is symmetric between the two groups.
+    """
     by_key = {}
     for row in rows:
         by_key.setdefault((row["task"], row["seed"]), {})[row["group"]] = row
-    first_diff, best_diff, cost_diff = [], [], []
+    first_diff, log_diff, cost_diff = [], [], []
+    cost_missing = 0
     for pair in by_key.values():
         kb, base = pair.get("kb"), pair.get("no_rsi")
         if not kb or not base:
             continue
         first_diff.append(base["first_pass_iter"] - kb["first_pass_iter"])
-        best_diff.append(kb["best_speedup"] - base["best_speedup"])
-        cost_diff.append(kb["total_tokens"] / max(0.01, kb["best_speedup"] - 1.0)
-                         - base["total_tokens"] / max(0.01, base["best_speedup"] - 1.0))
+        log_diff.append(_log_speedup(kb["best_speedup"]) - _log_speedup(base["best_speedup"]))
+        kb_cost, base_cost = _cost_per_gain(kb), _cost_per_gain(base)
+        if kb_cost is None or base_cost is None:
+            cost_missing += 1
+        else:
+            cost_diff.append(kb_cost - base_cost)
     return {
         "first_pass_improvement": _median_ci(first_diff),
-        "best_speedup_improvement": _median_ci(best_diff),
+        "log_speedup_ratio": _median_ci(log_diff),
+        "log_speedup_ratio_geomean": (round(math.exp(statistics.median(log_diff)), 4)
+                                      if log_diff else None),
         "cost_per_gain_difference": _median_ci(cost_diff),
+        "cost_pairs_missing": cost_missing,
         "pairs": len(first_diff),
     }
 
@@ -262,8 +300,9 @@ def _report(rows: list, args, train: dict) -> dict:
         groups[group] = {
             "first_pass_iter": _median_ci([r["first_pass_iter"] for r in subset]),
             "best_speedup": _median_ci([r["best_speedup"] for r in subset]),
-            "cost_per_gain": _median_ci([r["total_tokens"] / max(0.01, r["best_speedup"] - 1.0)
-                                         for r in subset]),
+            "cost_per_gain": _median_ci([_cost_per_gain(r) for r in subset
+                                         if _cost_per_gain(r) is not None]),
+            "cost_per_gain_runs": sum(1 for r in subset if _cost_per_gain(r) is not None),
             "tokens": _median_ci([r["total_tokens"] for r in subset]),
             "passes": sum(1 for r in subset if r["status"] in ("pass", "pass_unstable")),
             "n": len(subset),
@@ -272,10 +311,14 @@ def _report(rows: list, args, train: dict) -> dict:
     paired = _paired(rows)
     transfer = _negative_transfer(rows)
     first_ok = bool((paired["first_pass_improvement"]["ci"] or [0, 0])[0] > 0)
-    best_ok = bool((paired["best_speedup_improvement"]["ci"] or [0, 0])[0] > 0)
+    best_ok = bool((paired["log_speedup_ratio"]["ci"] or [0, 0])[0] > 0)
+    # Cost per unit log-gain: only runs that actually have a gain contribute, so a
+    # group cannot look better merely by spending more tokens on a flat result.
     cost_ok = None
-    if "kb" in groups and "no_rsi" in groups:
-        cost_ok = groups["kb"]["cost_per_gain"]["median"] <= groups["no_rsi"]["cost_per_gain"]["median"]
+    kb_cost = (groups.get("kb") or {}).get("cost_per_gain", {}).get("median")
+    base_cost = (groups.get("no_rsi") or {}).get("cost_per_gain", {}).get("median")
+    if kb_cost is not None and base_cost is not None:
+        cost_ok = kb_cost <= base_cost
     return {
         "holdout_tasks": args.holdout_tasks,
         "train_tasks": args.train_tasks,
@@ -330,8 +373,9 @@ def render_markdown(report: dict, args, started: str) -> str:
         "- pairs: %d" % paired["pairs"],
         "- first-pass improvement (no_rsi - kb; positive = RSI needs fewer iterations): %s CI %s"
         % (paired["first_pass_improvement"]["median"], paired["first_pass_improvement"]["ci"]),
-        "- best-speedup improvement (kb - no_rsi): %s CI %s"
-        % (paired["best_speedup_improvement"]["median"], paired["best_speedup_improvement"]["ci"]),
+        "- log-speedup ratio (kb / no_rsi; median %s CI %s, geomean %.3fx)"
+        % (paired["log_speedup_ratio"]["median"], paired["log_speedup_ratio"]["ci"],
+           paired.get("log_speedup_ratio_geomean") or 1.0),
         "- tokens/gain difference: %s CI %s"
         % (paired["cost_per_gain_difference"]["median"], paired["cost_per_gain_difference"]["ci"]),
         "",

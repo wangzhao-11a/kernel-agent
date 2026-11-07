@@ -1,22 +1,30 @@
 """Evaluator-integrity guards.
 
-Two independent anti-cheat signals used by the worker:
+Four independent anti-cheat signals used by the worker:
 
-1. ``snapshot_torch`` / ``diff_torch_snapshots``: importing a solution must not
-   replace torch's compute functions.  A solution that slows the baseline down
-   (or speeds itself up) by monkeypatching ``torch.softmax`` & co. is detected
-   by an ``id()`` snapshot taken immediately before and after the import.
-2. ``audit_source``: static AST findings for solutions that reach into the
-   evaluator (import the task module / harness, call ``reference()``, load
-   modules dynamically, or walk ``sys.modules``).
+1. ``snapshot_torch``: importing a solution must not replace torch's compute
+   functions (a solution that slows the baseline down or speeds itself up by
+   monkeypatching ``torch.softmax`` & co. is caught by an ``id()`` snapshot
+   taken immediately before and after the import).
+2. ``snapshot_harness``: the solution must not rebind anything inside the
+   evaluator modules either — e.g. swapping ``harness.benchmark.time`` for a
+   fake clock.  Only callables and modules are compared, so legitimate lazy
+   caches (``harness.device._TORCH``) are not flagged.
+3. ``audit_source``: static AST findings for solutions that reach into the
+   evaluator (task/harness imports, ``reference()`` calls, dynamic imports,
+   frame/GC/ctypes introspection).
+4. ``detect_side_stream``: current-stream event timing vs a globally
+   synchronized wall clock; work on a side stream escapes the former only.
 
-``detect_side_stream`` compares current-stream event timing with a globally
-synchronized wall clock; work launched on a non-default stream escapes the
-former but is captured by the latter.
+``harness.benchmark`` additionally binds the real ``perf_counter`` at import and
+records whether the module-level clock agrees with it, which the worker uses as
+a runtime clock audit.
 """
 from __future__ import annotations
 
 import ast
+import types
+from importlib import import_module
 
 # Compute entry points a solution could replace to poison the baseline.  Keep
 # this list to functions the reference implementations actually use.
@@ -42,8 +50,16 @@ _TENSOR_METHODS = (
 
 BLOCKING_CODES = frozenset({
     "reference_import", "reference_call", "dynamic_import", "dynamic_exec",
-    "module_introspection",
+    "module_introspection", "evaluator_introspection",
 })
+
+# Modules whose attributes are part of the measurement path.  A solution that
+# rebinds any callable or module here is doing evaluator surgery.
+_HARNESS_MODULES = (
+    "harness.benchmark", "harness.measure", "harness.stats", "harness.noise",
+    "harness.correctness", "harness.guard", "harness.worker", "harness.device",
+    "harness.tasks",
+)
 
 
 def snapshot_torch() -> dict:
@@ -85,6 +101,24 @@ def snapshot_runtime() -> dict:
         "statistics.median": id(statistics.median),
         "statistics.fmean": id(statistics.fmean),
     }
+
+
+def snapshot_harness() -> dict:
+    """Map harness module attribute name -> id(), for callables and modules only.
+
+    Plain data attributes are skipped on purpose: lazy caches such as
+    ``harness.device._TORCH`` legitimately change when torch is first imported.
+    """
+    out = {}
+    for name in _HARNESS_MODULES:
+        try:
+            module = import_module(name)
+        except Exception:
+            continue
+        for attr, value in vars(module).items():
+            if isinstance(value, types.ModuleType) or callable(value):
+                out["%s.%s" % (name, attr)] = id(value)
+    return out
 
 
 def diff_snapshots(before: dict, after: dict) -> list:
@@ -133,6 +167,9 @@ def audit_source(source: str, task_stem: str = "") -> list:
                 if task_stem and name.split(".")[-1] == task_stem:
                     findings.append({"severity": "error", "code": "reference_import",
                                      "message": "imports the task module: %s" % name})
+                if name in ("importlib", "inspect", "gc", "ctypes"):
+                    findings.append({"severity": "error", "code": "evaluator_introspection",
+                                     "message": "imports %s (evaluator introspection)" % name})
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if module == "harness" or module.startswith("harness."):
@@ -141,6 +178,9 @@ def audit_source(source: str, task_stem: str = "") -> list:
             if task_stem and module.split(".")[-1] == task_stem:
                 findings.append({"severity": "error", "code": "reference_import",
                                  "message": "imports the task module: %s" % module})
+            if module.split(".")[0] in ("importlib", "inspect", "gc", "ctypes"):
+                findings.append({"severity": "error", "code": "evaluator_introspection",
+                                 "message": "imports from %s (evaluator introspection)" % module})
         elif isinstance(node, ast.Call):
             name = _call_name(node)
             if name == "reference" or name.endswith(".reference"):
@@ -161,6 +201,11 @@ def audit_source(source: str, task_stem: str = "") -> list:
             if name in ("__import__", "builtins.__import__"):
                 findings.append({"severity": "error", "code": "dynamic_import",
                                  "message": "uses __import__: %s" % name})
+            if name.startswith(("importlib.", "inspect.")) or name in (
+                    "sys._getframe", "sys._current_frames", "gc.get_objects",
+                    "gc.get_referrers", "gc.get_referents"):
+                findings.append({"severity": "error", "code": "evaluator_introspection",
+                                 "message": "evaluator introspection via %s" % name})
         elif isinstance(node, ast.Attribute):
             if node.attr == "reference":
                 findings.append({"severity": "warn", "code": "reference_ref",
@@ -169,6 +214,9 @@ def audit_source(source: str, task_stem: str = "") -> list:
                     and node.value.id == "sys"):
                 findings.append({"severity": "error", "code": "module_introspection",
                                  "message": "walks sys.modules (looks for evaluator modules)"})
+            if node.attr in ("_getframe", "_current_frames"):
+                findings.append({"severity": "error", "code": "evaluator_introspection",
+                                 "message": "walks interpreter frames (%s)" % node.attr})
 
     seen, out = set(), []
     for finding in findings:

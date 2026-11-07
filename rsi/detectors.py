@@ -8,22 +8,37 @@ ablation measurement in `rsi.distill` is the stronger attribution signal.
 from __future__ import annotations
 
 import ast
+import difflib
 import io
 import re
 import tokenize
 
 
 def code_only(source: str) -> str:
-    """Strip comments and string literals: attribution must match code, not prose."""
+    """Blank out comments and string literals, keeping the rest verbatim.
+
+    The code is masked in place (same characters, spaces where the comment or
+    string was) instead of re-joining tokens, so punctuation-sensitive regexes
+    such as ``torch.softmax(`` still match.
+    """
+    text = source or ""
+    keep = "\r\n"
     try:
-        pieces = []
-        for tok in tokenize.generate_tokens(io.StringIO(source or "").readline):
-            if tok.type in (tokenize.COMMENT, tokenize.STRING):
+        rows = [list(line) for line in text.splitlines(keepends=True)]
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type not in (tokenize.COMMENT, tokenize.STRING):
                 continue
-            pieces.append(tok.string)
-        return " ".join(pieces).lower()
+            (sr, sc), (er, ec) = tok.start, tok.end
+            for row in range(sr - 1, min(er, len(rows))):
+                line = rows[row]
+                start = sc if row == sr - 1 else 0
+                end = ec if row == er - 1 else len(line)
+                for index in range(start, min(end, len(line))):
+                    if line[index] not in keep:
+                        line[index] = " "
+        return "".join("".join(row) for row in rows).lower()
     except Exception:
-        return (source or "").lower()
+        return text.lower()
 
 
 def _call_name(node) -> str:
@@ -113,3 +128,43 @@ SEED_DETECTORS = {
 
 def detector_for(key: str):
     return SEED_DETECTORS.get(str(key or ""))
+
+
+def diff_ratio(original: str, variant: str) -> float:
+    """Share of changed lines between two sources (0 = identical, 1 = rewritten)."""
+    a = (original or "").splitlines()
+    b = (variant or "").splitlines()
+    if not a and not b:
+        return 0.0
+    matcher = difflib.SequenceMatcher(None, a, b)
+    same = sum(block.size for block in matcher.get_matching_blocks())
+    return 1.0 - (same / max(1, max(len(a), len(b))))
+
+
+def validate_ablation(strategies: dict, target_id: str, member_ids, original: str,
+                      variant: str, max_diff: float = 0.75):
+    """Is this variant a credible 'remove exactly this practice' experiment?
+
+    Requires: the target practice is gone (its detector no longer matches), the
+    other practices of the best solution are still present, and the edit is not a
+    rewrite of the whole file (which would make attribution meaningless).
+    Returns (valid, reason).
+    """
+    problems = []
+    target = (strategies or {}).get(target_id) or {}
+    detector = target.get("detector")
+    if not detector:
+        problems.append("target has no detector")
+    elif match(detector, variant):
+        problems.append("target practice still present in the variant")
+    for other in member_ids or ():
+        if other == target_id:
+            continue
+        other_detector = ((strategies or {}).get(other) or {}).get("detector")
+        if other_detector and not match(other_detector, variant):
+            problems.append("variant removed an unrelated practice: %s" % other)
+    ratio = diff_ratio(original, variant)
+    if ratio > max_diff:
+        problems.append("variant rewrites %.0f%% of the file (cap %.0f%%)"
+                        % (100 * ratio, 100 * max_diff))
+    return (not problems), "; ".join(problems)

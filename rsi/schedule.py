@@ -16,6 +16,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -56,6 +57,25 @@ def _synthetic_approved(path: str) -> bool:
         return bool(read_json(_sidecar(path)).get("approved"))
     except Exception:
         return False
+
+
+def _find_task_path(tasks_root: str, name: str) -> str:
+    for path in sorted(glob.glob(os.path.join(tasks_root, "**", "*.py"), recursive=True)):
+        if "__pycache__" in path or os.path.basename(path).startswith("_"):
+            continue
+        if os.path.splitext(os.path.basename(path))[0] == name:
+            return path
+    return ""
+
+
+def _holdout_eval(args, knowledge_root: str, task_paths, out_dir: str) -> dict:
+    if args.skip_holdout_eval or not task_paths:
+        return {"score": None, "metric": "skipped", "n_tasks": 0, "tasks": {},
+                "reason": "holdout evaluation disabled" if args.skip_holdout_eval
+                          else "no holdout tasks configured"}
+    return version.evaluate_holdout(
+        knowledge_root, task_paths, out_dir, seeds=args.holdout_eval_seeds,
+        max_iters=args.holdout_eval_iters, timeout=args.timeout)
 
 
 def _approval(args, task_path: str, seed: int, variant: str):
@@ -160,9 +180,16 @@ def run_cycle(args) -> dict:
                          tasks_root=args.tasks_root)
     plans = build_plan(report, top=args.top)
     holdout_tasks = list(((read_json(args.holdout_config) or {}).get("tasks") or {}).keys())
+    holdout_paths = [p for p in (_find_task_path(args.tasks_root, name) for name in holdout_tasks) if p]
 
     before = version.snapshot(args.knowledge_root, os.path.join(args.versions_root, "snapshots"))
-    score_before = version.holdout_score([args.runs_root, cycle_runs], holdout_tasks)
+    # Real re-evaluation, not a historical average: same holdout tasks, the same
+    # runner, one score per knowledge snapshot.
+    before_kb = os.path.join(cycle_dir, "kb_before")
+    if os.path.isdir(before["path"]):
+        shutil.copytree(before["path"], before_kb)
+    score_before = _holdout_eval(args, before_kb or args.knowledge_root, holdout_paths,
+                                 os.path.join(cycle_dir, "holdout_before"))
 
     remaining = int(args.budget_iters)
     rows = []
@@ -200,7 +227,8 @@ def run_cycle(args) -> dict:
                         break
 
     after = version.snapshot(args.knowledge_root, os.path.join(args.versions_root, "snapshots"))
-    score_after = version.holdout_score([args.runs_root, cycle_runs], holdout_tasks)
+    score_after = _holdout_eval(args, args.knowledge_root, holdout_paths,
+                                os.path.join(cycle_dir, "holdout_after"))
     rollback = version.rollback_if_worse(
         args.knowledge_root, before, score_before, score_after, args.rollback_eps)
     final_version = version.knowledge_version(args.knowledge_root)
@@ -300,6 +328,11 @@ def main(argv=None) -> int:
     ap.add_argument("--versions-root", default=version.DEFAULT_VERSIONS)
     ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--rollback-eps", type=float, default=0.01)
+    ap.add_argument("--holdout-eval-iters", type=int, default=4,
+                    help="iterations per holdout re-evaluation run")
+    ap.add_argument("--holdout-eval-seeds", type=int, default=1)
+    ap.add_argument("--skip-holdout-eval", action="store_true",
+                    help="do not re-run the holdout tasks (rollback then stays disabled)")
     ap.add_argument("--git-commit", action="store_true")
     args = ap.parse_args(argv)
 
