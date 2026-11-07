@@ -38,6 +38,10 @@ from . import measure as measure_mod
 from . import noise as noise_mod
 from .tasks import TaskLoadError, load_task
 
+# Bound at import: the report must not depend on the module attribute `time`.
+_PERF_COUNTER = time.perf_counter
+_WALL_CLOCK = time.time
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -209,12 +213,13 @@ def measure_holdout(task, run, baseline_fn, device: str, warmup: int, rep: int,
     out = {"case": case.get("name") or "holdout", "ok": False, "speedup": None,
            "speedup_ci": None, "n_rounds": 0, "epsilon": epsilon, "success": False}
     try:
-        sets = [list(task.holdout_inputs(case, device, trial)) for trial in range(2)]
-        inputs = sets[0]
-        ref = _wrap_inference(task.reference)(*inputs)
-        dev.sync(device)
-        got = run(*inputs)
-        dev.sync(device)
+        with task.holdout_constants(case):
+            sets = [list(task.holdout_inputs(case, device, trial)) for trial in range(2)]
+            inputs = sets[0]
+            ref = _wrap_inference(task.reference)(*inputs)
+            dev.sync(device)
+            got = run(*inputs)
+            dev.sync(device)
         cmp = corr_mod.compare_outputs(
             ref, got, float(task.tolerance.get("atol", 1e-5)),
             float(task.tolerance.get("rtol", 1e-5)))
@@ -222,19 +227,29 @@ def measure_holdout(task, run, baseline_fn, device: str, warmup: int, rep: int,
         if not out["ok"]:
             out["reason"] = cmp.get("reason") or "holdout correctness failed"
             return out
-        measured = measure_mod.ab_benchmark(
-            run, _wrap_inference(baseline_fn), sets, device, rounds=3,
-            warmup=max(3, int(warmup) // 2), rep=max(5, int(rep) // 4), flush_l2=flush)
+        with task.holdout_constants(case):
+            measured = measure_mod.ab_benchmark(
+                run, _wrap_inference(baseline_fn), sets, device, rounds=6,
+                warmup=max(3, int(warmup) // 2), rep=max(5, int(rep) // 3), flush_l2=flush)
+        ci = measured["speedup_ci"]
+        unstable = bool(epsilon is not None and measured["stability_delta"] > epsilon)
+        if unstable and ci and len(ci) == 2 and epsilon:
+            factor = min(3.0, 1.0 + float(measured["stability_delta"]) / float(epsilon))
+            mid = float(measured["speedup"])
+            ci = [round(mid - (mid - float(ci[0])) * factor, 4),
+                  round(mid + (float(ci[1]) - mid) * factor, 4)]
+            out["speedup_ci_raw"] = list(measured["speedup_ci"])
+            out["ci_widened"] = round(factor, 3)
         out.update({
             "speedup": measured["speedup"],
-            "speedup_ci": measured["speedup_ci"],
+            "speedup_ci": ci,
             "n_rounds": measured["n_rounds"],
             "stability_delta": measured["stability_delta"],
-            "success": noise_mod.classify(measured["speedup_ci"], epsilon) == "success",
+            "unstable": unstable,
+            # Same rule as the training measurement: instability widens the CI,
+            # it does not veto a lower bound that still clears 1 + epsilon.
+            "success": noise_mod.classify(ci, epsilon) == "success",
         })
-        if epsilon is not None and measured["stability_delta"] > epsilon:
-            out["success"] = False
-            out["unstable"] = True
     except Exception as exc:
         out["reason"] = "%s: %s" % (type(exc).__name__, exc)
     return out
@@ -287,10 +302,10 @@ def side_stream_audit(fn, inputs, device: str, reps: int = 5) -> dict:
         wall = []
         for _ in range(int(reps)):
             dev.sync(device)
-            t0 = time.perf_counter()
+            t0 = _PERF_COUNTER()
             fn(*inputs)
             dev.sync(device)
-            wall.append((time.perf_counter() - t0) * 1000.0)
+            wall.append((_PERF_COUNTER() - t0) * 1000.0)
         event_med = float(statistics.median(event_ms))
         wall_med = float(statistics.median(wall))
         out.update({
@@ -361,6 +376,13 @@ def format_summary(result: dict) -> str:
         lines.append("torch attributes changed during import: %s" % ", ".join(result["torch_attr_changes"]))
     if result.get("runtime_attr_changes"):
         lines.append("evaluator attributes changed: %s" % ", ".join(result["runtime_attr_changes"]))
+    if result.get("harness_attr_changes"):
+        lines.append("harness module attributes changed: %s" % ", ".join(result["harness_attr_changes"]))
+    clock = result.get("clock_audit") or {}
+    if clock.get("checked"):
+        lines.append("clock audit: %d anomaly iteration(s)%s" % (
+            clock.get("anomalies", 0),
+            " -> SUSPICIOUS" if clock.get("suspicious") else ""))
     if result.get("suspicious"):
         lines.append("suspicious: %s" % "; ".join(result.get("suspicious_reasons") or []))
     if result.get("status") != "pass" and result.get("error"):
@@ -369,7 +391,7 @@ def format_summary(result: dict) -> str:
 
 
 def _finish(result: dict, out_path: str, t_start: float) -> dict:
-    result["wall_time_s"] = round(time.time() - t_start, 2)
+    result["wall_time_s"] = round(_WALL_CLOCK() - t_start, 2)
     try:
         with open(out_path, "w", encoding="utf-8") as fh:
             json.dump(result, fh, ensure_ascii=False, indent=2)
@@ -406,7 +428,7 @@ def main(argv=None) -> int:
     ap.add_argument("--iter", type=int, default=0)
     args = ap.parse_args(argv)
 
-    t_start = time.time()
+    t_start = _WALL_CLOCK()
     device = dev.resolve_device(args.device)
     # Read the calibrated noise amplitude before the solution is imported: a
     # solution cannot loosen this run's gate by rewriting configs/noise.json.
@@ -425,6 +447,8 @@ def main(argv=None) -> int:
         "suspicious_reasons": [],
         "torch_attr_changes": [],
         "runtime_attr_changes": [],
+        "harness_attr_changes": [],
+        "clock_audit": None,
         "source_audit": [],
         "correctness": None,
         "timing": None,
@@ -489,6 +513,7 @@ def main(argv=None) -> int:
     # (3) Evaluator-attribute snapshot around the import.
     torch_before = guard_mod.snapshot_torch()
     runtime_before = guard_mod.snapshot_runtime()
+    harness_before = guard_mod.snapshot_harness()
     try:
         solution = import_solution(args.solution)
     except Exception:
@@ -497,8 +522,10 @@ def main(argv=None) -> int:
         return _finish(result, args.out, t_start)
     torch_changes = guard_mod.diff_snapshots(torch_before, guard_mod.snapshot_torch())
     runtime_changes = guard_mod.diff_snapshots(runtime_before, guard_mod.snapshot_runtime())
+    harness_changes = guard_mod.diff_snapshots(harness_before, guard_mod.snapshot_harness())
     result["torch_attr_changes"] = torch_changes
     result["runtime_attr_changes"] = runtime_changes
+    result["harness_attr_changes"] = harness_changes
 
     entry = getattr(solution, task.entrypoint, None)
     if not callable(entry):
@@ -520,6 +547,9 @@ def main(argv=None) -> int:
         reasons.append("monkeypatched torch attributes during import: %s" % ", ".join(torch_changes))
     if runtime_changes:
         reasons.append("monkeypatched evaluator attributes during import: %s" % ", ".join(runtime_changes))
+    if harness_changes:
+        reasons.append("monkeypatched harness module attributes during import: %s"
+                       % ", ".join(harness_changes))
     reasons = list(dict.fromkeys(reasons))
     if reasons:
         result["suspicious"] = True
@@ -576,17 +606,41 @@ def main(argv=None) -> int:
     # A late monkeypatch (inside run()) must not be able to touch the baseline.
     torch_after_run = guard_mod.snapshot_torch()
     runtime_after_run = guard_mod.snapshot_runtime()
+    harness_after_run = guard_mod.snapshot_harness()
     torch_late = guard_mod.diff_snapshots(torch_before, torch_after_run)
     runtime_late = guard_mod.diff_snapshots(runtime_before, runtime_after_run)
-    if torch_late or runtime_late:
+    harness_late = guard_mod.diff_snapshots(harness_before, harness_after_run)
+    if torch_late or runtime_late or harness_late:
         result["torch_attr_changes"] = sorted(set(torch_changes + torch_late))
         result["runtime_attr_changes"] = sorted(set(runtime_changes + runtime_late))
-        late = torch_late + runtime_late
+        result["harness_attr_changes"] = sorted(set(harness_changes + harness_late))
+        late = torch_late + runtime_late + harness_late
         result["status"] = "fail_suspicious"
         result["error"] = "monkeypatched evaluator attributes during the run: %s" % ", ".join(late)
         return _finish(result, args.out, t_start)
 
+    anomalies = int(measurement.get("clock_anomalies") or 0)
+    result["clock_audit"] = {"checked": True, "anomalies": anomalies,
+                             "suspicious": anomalies > 0}
+    if anomalies:
+        result["status"] = "fail_suspicious"
+        result["error"] = ("clock audit: the module-level clock disagreed with the bound clock "
+                           "on %d timed iteration(s)" % anomalies)
+        return _finish(result, args.out, t_start)
+
     unstable = bool(epsilon is not None and measurement["stability_delta"] > epsilon)
+    # Instability must not throw away a real gain: it widens the interval and
+    # marks the row.  A widened lower bound that still clears 1 + epsilon is
+    # still evidence (the success rule itself lives in harness.noise.classify).
+    raw_ci = measurement.get("speedup_ci")
+    if unstable and raw_ci and len(raw_ci) == 2 and epsilon:
+        factor = min(3.0, 1.0 + float(measurement["stability_delta"]) / float(epsilon))
+        mid = float(measurement["speedup"])
+        lo = mid - (mid - float(raw_ci[0])) * factor
+        hi = mid + (float(raw_ci[1]) - mid) * factor
+        measurement["speedup_ci_raw"] = list(raw_ci)
+        measurement["speedup_ci"] = [round(lo, 4), round(hi, 4)]
+        measurement["ci_widened"] = round(factor, 3)
     holdout = None
     train_ci = measurement.get("speedup_ci")
     if (not args.no_holdout and task.holdout_cases and train_ci

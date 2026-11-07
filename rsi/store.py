@@ -180,12 +180,13 @@ class StrategyStore:
             stats["calibration_mae"] = round(err, 4) if prev is None else round(0.6 * prev + 0.4 * err, 4)
         if outcome == "success":
             # Verification is a reproduction claim: at least two independent runs
-            # must have succeeded, and a success that failed the holdout shapes
-            # cannot count toward it (P3.1).
+            # must have succeeded, and each one must also have passed the holdout
+            # shapes.  A run with no holdout configured (holdout_ok is None) can
+            # never verify a strategy (P3.1).
             runs = {str(e.get("run_id") or e.get("trajectory") or "")
                     for e in st["evidence"]
                     if e.get("outcome") == "success"
-                    and e.get("holdout_ok") is not False}
+                    and e.get("holdout_ok") is True}
             runs.discard("")
             st["confidence"] = "verified" if len(runs) >= 2 else "candidate"
         st["updated"] = _now()

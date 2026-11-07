@@ -45,6 +45,7 @@ from rsi import bottlenecks  # noqa: E402
 from rsi.cards import DEFAULT_KB_ROOT as DEFAULT_CANN_KB_ROOT  # noqa: E402
 from rsi.cards import read_card, render_candidates, retrieve_cards  # noqa: E402
 from rsi.detectors import match as detector_match  # noqa: E402
+from rsi.detectors import validate_ablation  # noqa: E402
 from rsi.distill import attribute_from_source, distill_run, expand_declared, resolve_declared  # noqa: E402
 from rsi.exemplars import render_exemplars, retrieve_exemplars  # noqa: E402
 from rsi.features import hardware_from_device, task_features  # noqa: E402
@@ -524,7 +525,7 @@ def main(argv=None) -> int:
     # (bounded budget); each variant is measured with the same P1 ABAB pipeline.
     ablation_results = []
     if (use_rsi and not args.no_ablate and args.ablate_budget > 0
-            and best.get("status") == "pass" and best.get("path")):
+            and best.get("status") in ("pass", "pass_unstable") and best.get("path")):
         try:
             with open(os.path.join(run_dir, "attempts.jsonl"), encoding="utf-8") as fh:
                 rows = [json.loads(line) for line in fh if line.strip()]
@@ -582,10 +583,17 @@ def main(argv=None) -> int:
                 log("harness", format_summary(result),
                     meta={"iteration": iteration, "ablation_of": sid})
                 timing = result.get("timing") or {}
+                ablation_valid, ablation_problem = validate_ablation(
+                    store.strategies, sid, strategy_ids, best_source, content)
+                if not ablation_valid:
+                    log("system", "ablation rejected for %s: %s" % (sid, ablation_problem),
+                        meta={"ablation_of": sid})
                 attempt = {
                     "iter": "ablation:%s" % sid,
                     "kind": "ablation",
                     "ablation_of": sid,
+                    "ablation_valid": ablation_valid,
+                    "ablation_problem": ablation_problem,
                     "task": task.name,
                     "task_file": os.path.abspath(args.task),
                     "solution": os.path.abspath(path),
@@ -610,6 +618,8 @@ def main(argv=None) -> int:
                     "speedup": attempt["speedup"],
                     "speedup_ci": attempt["speedup_ci"],
                     "stability_delta": attempt["stability_delta"],
+                    "valid": ablation_valid,
+                    "problem": ablation_problem,
                 })
 
     attempts_file.close()

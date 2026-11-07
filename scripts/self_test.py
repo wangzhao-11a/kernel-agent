@@ -49,6 +49,14 @@ GOOD_SOLUTION = "def run(x, y):\n    return x + y\n"
 WRONG_SOLUTION = "def run(x, y):\n    return x - y\n"
 MUTATING_SOLUTION = "def run(x, y):\n    x += y\n    return x\n"
 HANGING_SOLUTION = "def run(x, y):\n    while True:\n        pass\n"
+# Matches both the online_softmax detector (max+exp) and block_tiling (TILE).
+SOFTMAX_SOURCE = "\n".join([
+    "import torch", "", "TILE = 1024", "",
+    "def run(x):",
+    "    m = x.max(dim=-1, keepdim=True).values",
+    "    e = torch.exp(x - m)",
+    "    return e / e.sum(dim=-1, keepdim=True)",
+]) + "\n"
 
 NCU_CSV = textwrap.dedent('''\
     ==PROF== Connected to process 1234
@@ -348,11 +356,14 @@ def check_verified_two_runs(tmp):
 
     store = StrategyStore(os.path.join(tmp, "verify_kb"))
     st = store.find_by_key("block_tiling")
-    store.record_evidence(st["id"], "runs/a/trajectory.json", "t", 1.4, "success", run_id="run_a")
+    store.record_evidence(st["id"], "runs/a/trajectory.json", "t", 1.4, "success",
+                          run_id="run_a", holdout_ok=True)
     assert st["confidence"] == "candidate", st["confidence"]
-    store.record_evidence(st["id"], "runs/a/trajectory.json", "t", 1.4, "success", run_id="run_a")
+    store.record_evidence(st["id"], "runs/a/trajectory.json", "t", 1.4, "success",
+                          run_id="run_a", holdout_ok=True)
     assert st["confidence"] == "candidate", "the same run must not verify a strategy"
-    store.record_evidence(st["id"], "runs/b/trajectory.json", "t", 1.4, "success", run_id="run_b")
+    store.record_evidence(st["id"], "runs/b/trajectory.json", "t", 1.4, "success",
+                          run_id="run_b", holdout_ok=True)
     assert st["confidence"] == "verified", st["confidence"]
 
 
@@ -444,36 +455,68 @@ def check_distill_gate(tmp):
     st = store.find_by_key("online_softmax")
     assert st["confidence"] == "candidate", st["confidence"]
 
-def check_unstable_skipped(tmp):
+def check_unstable_kept(tmp):
+    """P1 fix: instability widens the CI, it does not discard a real gain."""
     from rsi.distill import distill_run
     from rsi.store import StrategyStore
 
     run_dir = os.path.join(tmp, "unstable_run")
+    best_path = write(os.path.join(run_dir, "best.py"), SOFTMAX_SOURCE)
+    weak_path = write(os.path.join(run_dir, "weak.py"), SOFTMAX_SOURCE)
     meta = {
         "task": "np_softmax", "device": "cpu", "hardware": "cpu",
         "features": {"tags": ["softmax", "reduction"], "op_class": "reduction",
                      "dtypes": ["float32"]},
-        "best": {"status": "pass_unstable", "speedup": 1.4},
+        "best": {"status": "pass_unstable", "speedup": 4.0, "path": best_path},
     }
     write(os.path.join(run_dir, "meta.json"), json.dumps(meta))
     traj = {
         "task": "np_softmax", "task_file": "", "hardware": "cpu", "device": "cpu",
-        "features": meta["features"], "distilled": False,
-        "attempts": [{
-            "iter": 1, "status": "pass_unstable", "speedup": 1.4,
-            "speedup_ci": [1.30, 1.50], "stability_delta": 0.2, "epsilon": 0.05,
-            "strategies_declared": ["online softmax"],
-            "solution_source": "def run(x):\n    return x\n", "distilled": False,
-        }],
+        "features": meta["features"], "best": meta["best"], "distilled": False,
+        "attempts": [
+            # unstable, but the (already widened) interval clears 1 + epsilon
+            {"iter": 1, "status": "pass_unstable", "speedup": 4.0,
+             "speedup_ci": [3.79, 4.21], "speedup_ci_raw": [3.9, 4.1],
+             "stability_delta": 0.046, "epsilon": 0.043, "solution": best_path,
+             "strategies_declared": ["online softmax"],
+             "solution_source": SOFTMAX_SOURCE, "distilled": False},
+            # unstable and genuinely inconclusive: must stay neutral
+            {"iter": 2, "status": "pass_unstable", "speedup": 1.01,
+             "speedup_ci": [0.80, 1.02], "stability_delta": 0.09, "epsilon": 0.043,
+             "solution": weak_path,
+             "strategies_declared": ["block tiling"],
+             "solution_source": SOFTMAX_SOURCE, "distilled": False},
+            # ablation evidence: removing online softmax hurts a lot ...
+            {"iter": "ablation:stg-0001", "kind": "ablation", "ablation_of": "stg-0001",
+             "status": "pass", "speedup": 0.5, "speedup_ci": [0.45, 0.55],
+             "solution_source": SOFTMAX_SOURCE, "distilled": False},
+            # ... but removing block tiling does not (it was already neutral)
+            {"iter": "ablation:stg-0002", "kind": "ablation", "ablation_of": "stg-0002",
+             "status": "pass", "speedup": 4.1, "speedup_ci": [4.0, 4.2],
+             "solution_source": SOFTMAX_SOURCE, "distilled": False},
+        ],
     }
     write(os.path.join(run_dir, "trajectory.json"), json.dumps(traj))
     store = StrategyStore(os.path.join(tmp, "unstable_kb"))
     report = distill_run(run_dir, store=store)
-    assert report["skipped"] and "unstable" in report["skipped"][0]["reason"], report
-    assert not report["evidence"], report
-    assert not any(row.get("evidence") for row in store.strategies.values())
+    assert not report["skipped"], report["skipped"]
+    assert len(report.get("unstable_kept") or []) == 2, report
+    outcomes = {row["strategy"]: row["outcome"] for row in report["evidence"]}
+    online = store.find_by_key("online_softmax")["id"]
+    tiling = store.find_by_key("block_tiling")["id"]
+    assert outcomes.get(online) == "success", report["evidence"]
+    assert outcomes.get(tiling) == "neutral", report["evidence"]
+    assert store.find_by_key("online_softmax")["stats"]["succeeded"] == 1
+def check_unstable_candidates_holdout_none(tmp):
+    """holdout=None (unconfigured task) may reach candidate, never verified."""
+    from rsi.store import StrategyStore
 
-
+    store = StrategyStore(os.path.join(tmp, "holdout_none_kb"))
+    st = store.find_by_key("block_tiling")
+    for index in range(3):
+        store.record_evidence(st["id"], "run-%d" % index, "t", 1.4, "success",
+                              run_id="run-%d" % index, holdout_ok=None)
+    assert st["confidence"] == "candidate", st["confidence"]
 def check_rsi_loop_distill(tmp):
     # torch softmax is used here because a ~0.05 ms numpy kernel is genuinely
     # unstable on a CPU (the P1 stability gate would skip it); the softmax
@@ -822,19 +865,32 @@ def _p2_sources():
 
 
 def run(x):
-    return torch.softmax(x, dim=-1)
+    y = x.contiguous()
+    return torch.softmax(y, dim=-1)
 """
-    ablated = """import torch
+    # removes torch.softmax, keeps .contiguous()
+    no_fused = """import torch
 
 
 def run(x):
-    m = x.max(dim=-1, keepdim=True).values
-    e = torch.exp(x - m)
-    for _ in range(3):
-        e = e.clone()
+    y = x.contiguous()
+    m = y.max(dim=-1, keepdim=True).values
+    e = torch.exp(y - m)
     return e / e.sum(dim=-1, keepdim=True)
 """
-    return full, ablated
+    # removes .contiguous(), keeps torch.softmax() and does the work twice
+    no_contig = """import torch
+
+
+def run(x):
+    y = torch.softmax(x, dim=-1)
+    for _ in range(5):
+        y = y.clone()   # stands in for the copies the fast path avoids
+    return y
+"""
+    # invalid ablation: claims to remove contiguous_input but keeps the marker
+    invalid = full
+    return full, no_fused, no_contig, invalid
 
 
 def _seed_p2_store(root):
@@ -844,11 +900,12 @@ def _seed_p2_store(root):
     store.upsert(statement="use torch fused softmax", key="fused_softmax",
                  tags=["softmax", "reduction"], op_class=["reduction"],
                  keywords=["fused softmax"], expected=2.0,
-                 detector={"kind": "regex", "any": [r"\bsoftmax\s*\("]})
-    store.upsert(statement="keep tensors on device", key="device_resident",
+                 detector={"kind": "regex", "any": [r"torch\.softmax\("]})
+    store.upsert(statement="make the hot tensor contiguous first",
+                 key="contiguous_input",
                  tags=["softmax", "reduction"], op_class=["reduction"],
-                 keywords=["device resident"], expected=1.2,
-                 detector={"kind": "regex", "any": [r"\btorch\b"]})
+                 keywords=["contiguous input"], expected=1.2,
+                 detector={"kind": "regex", "any": [r"\.contiguous\("]})
     store.save()
     return store
 
@@ -887,7 +944,7 @@ def check_p2_claimed_only(tmp):
     from rsi.store import StrategyStore
 
     task_path = write(os.path.join(tmp, "p2_tasks", "slow.py"), P2_TASK)
-    full, _ablated = _p2_sources()
+    full = _p2_sources()[0]
     replay = {"responses": [
         {"action": "write_solution", "content": full,
          "strategies": ["online softmax"], "expected_speedup": 3.0},
@@ -904,19 +961,21 @@ def check_p2_claimed_only(tmp):
 
 
 def check_p2_ablation_end_to_end(tmp):
-    """P2.2 + P2.4: ablation evidence is required for success and for combos."""
+    """P2.2 + P2.4 + P6: ablation evidence gates success, combos and validity."""
     from rsi.store import StrategyStore
 
     task_path = write(os.path.join(tmp, "p2_tasks", "slow_abl.py"), P2_TASK)
     root = os.path.join(tmp, "p2_abl_kb")
     store = _seed_p2_store(root)
-    full, ablated = _p2_sources()
+    full, no_fused, no_contig, invalid = _p2_sources()
     replay = {"responses": [
         {"action": "write_solution", "content": full,
-         "strategies": ["fused softmax", "device resident"], "expected_speedup": 3.0},
-        {"action": "write_solution", "content": ablated, "strategies": [],
+         "strategies": ["fused softmax", "contiguous input"], "expected_speedup": 3.0},
+        # ablation of fused_softmax (removes torch.softmax, keeps .contiguous())
+        {"action": "write_solution", "content": no_fused, "strategies": [],
          "expected_speedup": 1.0},
-        {"action": "write_solution", "content": ablated, "strategies": [],
+        # ablation of contiguous_input (keeps torch.softmax, removes .contiguous())
+        {"action": "write_solution", "content": no_contig, "strategies": [],
          "expected_speedup": 1.0},
         {"action": "finish", "summary": "ablation self-test"},
     ]}
@@ -925,7 +984,8 @@ def check_p2_ablation_end_to_end(tmp):
     ablations = meta["rsi"]["ablations"]
     assert len(ablations) == 2, ablations
     assert all(row.get("speedup_ci") for row in ablations), ablations
-    sids = [store.find_by_key("fused_softmax")["id"], store.find_by_key("device_resident")["id"]]
+    assert all(row.get("valid") is True for row in ablations), ablations
+    sids = [store.find_by_key("fused_softmax")["id"], store.find_by_key("contiguous_input")["id"]]
     rows = {row["strategy"]: row for row in report.get("evidence") or []}
     for sid in sids:
         row = rows.get(sid)
@@ -940,13 +1000,35 @@ def check_p2_ablation_end_to_end(tmp):
     assert set(combos[0]["members"]) == set(sids), combos
     assert all(combos[0]["contributions"].get(sid) for sid in sids), combos
 
-
+    # An "ablation" that does not actually remove the practice is invalid: its
+    # success is demoted to neutral and no combo is formed from it.
+    root2 = os.path.join(tmp, "p2_abl_invalid_kb")
+    store2 = _seed_p2_store(root2)
+    replay2 = {"responses": [
+        {"action": "write_solution", "content": full,
+         "strategies": ["fused softmax", "contiguous input"], "expected_speedup": 3.0},
+        {"action": "write_solution", "content": invalid, "strategies": [],
+         "expected_speedup": 1.0},
+        {"action": "write_solution", "content": no_contig, "strategies": [],
+         "expected_speedup": 1.0},
+        {"action": "finish", "summary": "invalid ablation self-test"},
+    ]}
+    _run_dir2, root2, meta2, report2 = _run_p2_loop(
+        tmp, "p2_abl_invalid", task_path, replay2, ["--ablate-budget", "2"])
+    fused = store2.find_by_key("fused_softmax")["id"]
+    rows2 = {row["strategy"]: row for row in report2.get("evidence") or []}
+    assert rows2[fused]["outcome"] == "neutral", rows2[fused]
+    assert rows2[fused]["ablation"]["valid"] is False, rows2[fused]
+    assert "still present" in rows2[fused]["ablation"]["problem"], rows2[fused]
+    combos2 = [line for line in open(os.path.join(root2, "combos.jsonl"), encoding="utf-8")
+               if line.strip()]
+    assert not combos2, combos2
 def check_p2_stage_failure(tmp):
     """P2.3: a syntax error is failure memory, not a strategy failure."""
     from rsi.store import StrategyStore
 
     task_path = write(os.path.join(tmp, "p2_tasks", "slow_stage.py"), P2_TASK)
-    _full, good = _p2_sources()
+    good = _p2_sources()[1]
     bad = """import torch
 
 
@@ -993,7 +1075,7 @@ def check_p4_synthetic_cap(tmp):
 
 
 def check_p4_version_rollback(tmp):
-    """P4.5: knowledge snapshots + holdout score drive the rollback."""
+    """P4.5: knowledge snapshots + a real holdout re-evaluation drive rollback."""
     from rsi import version
 
     root = os.path.join(tmp, "p4_v_kb")
@@ -1006,24 +1088,49 @@ def check_p4_version_rollback(tmp):
     after = version.snapshot(root, os.path.join(tmp, "p4_v_snaps"))
     assert before["version"] != after["version"]
 
-    def fake_run(name, speedup):
-        run_dir = os.path.join(tmp, name, "20260101-softmax")
-        write(os.path.join(run_dir, "meta.json"), json.dumps({
-            "task": "softmax", "device": "cpu", "hardware": "cpu",
-            "features": {}, "iterations": 1,
-            "best": {"status": "pass", "speedup": speedup},
-        }))
-        return os.path.join(tmp, name)
+    task_paths = [os.path.join(ROOT, "tasks", "level1", "softmax.py")]
 
-    score_before = version.holdout_score(fake_run("p4_v_runs_before", 1.2), ["softmax"])
-    score_after = version.holdout_score(fake_run("p4_v_runs_after", 1.0), ["softmax"])
-    assert score_before["score"] == 1.2 and score_after["score"] == 1.0, (score_before, score_after)
+    def stub(speedup):
+        def runner(task_path, knowledge_root, seed, run_dir, max_iters=4, timeout=900.0):
+            os.makedirs(run_dir, exist_ok=True)
+            return {"status": "pass", "speedup": speedup, "task": "softmax", "seed": seed}
+        return runner
+
+    score_before = version.evaluate_holdout(root, task_paths,
+                                            os.path.join(tmp, "p4_v_eval_before"),
+                                            runner=stub(1.2))
+    score_after = version.evaluate_holdout(root, task_paths,
+                                           os.path.join(tmp, "p4_v_eval_after"),
+                                           runner=stub(1.0))
+    assert abs(score_before["score"] - 0.1823) < 1e-3, score_before
+    assert abs(score_after["score"] - 0.0) < 1e-6, score_after
+    assert score_before["metric"].startswith("mean log(speedup)"), score_before
     result = version.rollback_if_worse(root, before, score_before, score_after, 0.01)
     assert result["rolled_back"] is True, result
     text = open(os.path.join(root, "strategies.jsonl"), encoding="utf-8").read()
     assert "stg-1" in text and "stg-2" not in text, text
 
 
+def check_p4_holdout_eval_is_real(tmp):
+    """P4.5: holdout_score is a fresh evaluation, not an average of old runs."""
+    from rsi import version
+
+    calls = []
+
+    def runner(task_path, knowledge_root, seed, run_dir, max_iters=4, timeout=900.0):
+        calls.append((task_path, knowledge_root, seed))
+        os.makedirs(run_dir, exist_ok=True)
+        return {"status": "pass", "speedup": 1.5, "task": "t", "seed": seed}
+
+    tasks = [os.path.join(ROOT, "tasks", "level1", "softmax.py"),
+             os.path.join(ROOT, "tasks", "level1", "matmul.py")]
+    score = version.evaluate_holdout(os.path.join(tmp, "p4_real_kb"), tasks,
+                                     os.path.join(tmp, "p4_real_eval"), runner=runner, seeds=2)
+    assert len(calls) == 4, calls
+    assert score["n_tasks"] == 2 and score["score"] is not None, score
+    # per task log ratio: log(1.5) for each, mean stays log(1.5)
+    assert abs(score["score"] - 0.4055) < 1e-3, score
+    assert all(abs(row["log_ratio"] - 0.4055) < 1e-3 for row in score["tasks"].values()), score
 def check_p4_auto_skill(tmp):
     """P4.4: a strategy that becomes verified auto-compiles a twice-validated skill."""
     from rsi.distill import distill_run
@@ -1047,7 +1154,8 @@ def check_p4_auto_skill(tmp):
     store = StrategyStore(root)
     sid = store.find_by_key("block_tiling")["id"]
     store.record_evidence(sid, "prior", "p4_auto", 1.4, "success",
-                          run_id="prior", hardware="cpu", dtype="float32")
+                          run_id="prior", hardware="cpu", dtype="float32",
+                          holdout_ok=True)
     assert store.strategies[sid]["confidence"] == "candidate"
 
     run_dir = os.path.join(tmp, "p4_auto_run")
@@ -1067,6 +1175,7 @@ def check_p4_auto_skill(tmp):
                 {"iter": 1, "status": "pass", "speedup": 4.0,
                  "speedup_ci": [3.9, 4.1], "solution": solution,
                  "solution_source": source, "epsilon": 0.043,
+                 "holdout_ok": True,
                  "strategies_declared": ["block tiling"],
                  "strategies_used": [sid], "distilled": False},
                 {"iter": "ablation:%s" % sid, "kind": "ablation", "ablation_of": sid,
@@ -1144,7 +1253,7 @@ def check_p4_synth_and_schedule(tmp):
         "--runs-root", runs_root, "--tasks-root", os.path.join(tmp, "p4_tasks"),
         "--holdout-config", os.path.join(root, "configs", "holdout.json"),
         "--versions-root", os.path.join(tmp, "p4_versions"),
-        "--out", sched_out, "--timeout", "300",
+        "--out", sched_out, "--timeout", "300", "--skip-holdout-eval",
     ], cwd=root, capture_output=True, text=True, encoding="utf-8",
         errors="replace", timeout=1200)
     assert sched.returncode == 0, (sched.stdout[-2000:] + "\n" + sched.stderr[-2000:])
@@ -1154,7 +1263,8 @@ def check_p4_synth_and_schedule(tmp):
     assert audit["runs"], audit
     assert all(row["task"].startswith("synth_") for row in audit["runs"]), audit["runs"]
     assert audit["used_iters"] <= 3, audit
-    assert audit["holdout_score"]["before"]["score"] == 1.2, audit["holdout_score"]
+    assert audit["holdout_score"]["before"]["score"] is None, audit["holdout_score"]
+    assert "holdout evaluation disabled" in (audit["holdout_score"]["before"].get("reason") or ""), audit["holdout_score"]
     assert audit["knowledge"]["before"]["id"] and audit["knowledge"]["after"]["id"], audit["knowledge"]
     assert audit["knowledge"]["final_version"], audit["knowledge"]
 
@@ -1189,6 +1299,10 @@ def check_adversarial_solutions(tmp):
 
     ref = run("ref_read_hack.py", rep=50)
     assert ref["status"] == "fail_suspicious", (ref["status"], ref.get("error"))
+
+    timer = run("timer_patch_hack.py", rep=50)
+    assert timer["status"] == "fail_suspicious", (timer["status"], timer.get("error"))
+    assert "harness" in (timer.get("error") or ""), timer.get("error")
 
     accelerator = dev.is_accelerator(dev.resolve_device("auto"))
     if accelerator:
@@ -1608,8 +1722,10 @@ def main():
     check("p3: evolve plan uses configured holdout", lambda: check_p3_evolve_holdout(tmp))
     check("p4: synthetic tasks are capped in the plan", lambda: check_p4_synthetic_cap(tmp))
     check("p4: knowledge snapshot/rollback + holdout score", lambda: check_p4_version_rollback(tmp))
+    check("p4: holdout score is a real re-evaluation", lambda: check_p4_holdout_eval_is_real(tmp))
     check("rsi: distill gate classifies neutral vs success", lambda: check_distill_gate(tmp))
-    check("rsi: unstable attempts are skipped by distill", lambda: check_unstable_skipped(tmp))
+    check("rsi: instability widens CI instead of discarding gains", lambda: check_unstable_kept(tmp))
+    check("rsi: holdout=None caps confidence at candidate", lambda: check_unstable_candidates_holdout_none(tmp))
     check("rsi: attribution precision (declarations resolve, prose ignored)", lambda: check_rsi_attribution_precision(tmp))
     check("rsi: knowledge blocks (exemplars, bottleneck playbook, calibration)", lambda: check_knowledge_blocks(tmp))
     check("harness: require-triton gate + op-baseline sanity check", lambda: check_constraint_and_baseline(tmp))

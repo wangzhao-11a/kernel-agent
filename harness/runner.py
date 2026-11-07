@@ -88,6 +88,7 @@ def run_evaluation(
         cmd += ["--require", require]
 
     t0 = time.time()
+    t_perf0 = time.perf_counter()
     stdout, stderr, rc = "", "", 0
     try:
         proc = subprocess.run(
@@ -113,6 +114,10 @@ def run_evaluation(
         }
         return _postprocess(result, append, results_file, quiet)
 
+    # Parent-side wall-clock reconciliation: the parent measures the subprocess
+    # itself, so a solution that fakes the worker's clock cannot hide it.
+    parent_wall = round(time.perf_counter() - t_perf0, 3)
+    ok_wall = True
     if os.path.isfile(out_path):
         try:
             with open(out_path, "r", encoding="utf-8") as fh:
@@ -144,6 +149,28 @@ def run_evaluation(
         }
 
     result["worker_stdout_tail"] = _tail(stdout, 800)
+    result["parent_wall_s"] = parent_wall
+    reported = result.get("wall_time_s")
+    try:
+        reported = float(reported) if reported is not None else None
+    except (TypeError, ValueError):
+        reported = None
+    if reported is not None and not result.get("skipped_wall_check"):
+        if reported > parent_wall + 3.0:
+            ok_wall = False
+            detail = ("worker reported %.2fs but the parent measured only %.2fs"
+                      % (reported, parent_wall))
+        elif parent_wall - reported > max(5.0, 0.5 * parent_wall):
+            ok_wall = False
+            detail = ("parent measured %.2fs while the worker reported %.2fs "
+                      "(evaluator clock looks altered)" % (parent_wall, reported))
+        else:
+            detail = ""
+        if not ok_wall:
+            result["status"] = "fail_suspicious"
+            result["error"] = "wall-clock reconciliation: " + detail
+            result["suspicious"] = True
+            result.setdefault("suspicious_reasons", []).append(result["error"])
     return _postprocess(result, append, results_file, quiet)
 
 

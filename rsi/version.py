@@ -70,40 +70,92 @@ def restore(root: str, version_dir: str) -> dict:
     return {"restored_from": version_dir, "version": knowledge_version(root)}
 
 
-def holdout_score(runs_root, holdout_tasks) -> dict:
-    """Mean best speedup over passing runs of the configured holdout tasks."""
-    wanted = {str(name) for name in (holdout_tasks or []) if str(name)}
-    roots = runs_root if isinstance(runs_root, (list, tuple)) else [runs_root]
-    values = []
-    for root in roots:
-        if not root or not os.path.isdir(root):
-            continue
-        for name in sorted(os.listdir(root)):
-            run_dir = os.path.join(root, name)
-            meta_path = os.path.join(run_dir, "meta.json")
-            if not os.path.isfile(meta_path):
-                continue
+def evaluate_holdout(knowledge_root, task_paths, out_dir, runner=None, seeds: int = 1,
+                     max_iters: int = 4, timeout: float = 900.0) -> dict:
+    """Re-run the fixed holdout tasks against this knowledge base.
+
+    `runner(task_path, knowledge_root, seed, run_dir) -> {"status", "speedup"}`
+    defaults to `agent.loop`.  Score per task is `log(speedup)` (baseline is the
+    reference at 1.0x), averaged over tasks: a geometric-mean gain, so a slow task
+    cannot dominate a fast one and scores are comparable across knowledge bases.
+    """
+    import math
+
+    out_dir = os.path.abspath(out_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    tasks = {}
+    log_scores = []
+    for task_path in task_paths:
+        name = os.path.splitext(os.path.basename(task_path))[0]
+        per_seed = []
+        for seed in range(1, max(1, int(seeds)) + 1):
+            run_dir = os.path.join(out_dir, name, "seed%d" % seed)
             try:
-                with open(meta_path, "r", encoding="utf-8") as fh:
-                    meta = json.load(fh)
-            except (OSError, ValueError):
-                continue
-            if str(meta.get("task") or "") not in wanted:
-                continue
-            best = meta.get("best") or {}
-            if best.get("status") not in ("pass", "pass_unstable"):
-                continue
-            try:
-                values.append(float(best.get("speedup") or 0.0))
-            except (TypeError, ValueError):
-                continue
+                result = (runner or _agent_runner)(
+                    task_path, knowledge_root, seed, run_dir,
+                    max_iters=max_iters, timeout=timeout)
+            except Exception as exc:
+                result = {"status": "error", "speedup": 0.0,
+                          "error": "%s: %s" % (type(exc).__name__, exc)}
+            per_seed.append(result)
+        ok = [row for row in per_seed if row.get("status") in ("pass", "pass_unstable")]
+        speedups = [float(row.get("speedup") or 0.0) for row in ok]
+        speedup = max(speedups) if speedups else 0.0
+        log_ratio = math.log(speedup) if speedup > 0 else None
+        tasks[name] = {
+            "speedup": round(speedup, 4),
+            "log_ratio": round(log_ratio, 4) if log_ratio is not None else None,
+            "passes": len(ok),
+            "runs": len(per_seed),
+            "statuses": [row.get("status") for row in per_seed],
+        }
+        if log_ratio is not None:
+            log_scores.append(log_ratio)
     return {
-        "score": (sum(values) / len(values)) if values else None,
-        "n_runs": len(values),
-        "tasks": sorted(wanted),
+        "score": round(sum(log_scores) / len(log_scores), 4) if log_scores else None,
+        "metric": "mean log(speedup) over fixed holdout tasks",
+        "n_tasks": len(tasks),
+        "tasks": tasks,
+        "knowledge_root": os.path.abspath(knowledge_root),
     }
 
 
+def _agent_runner(task_path, knowledge_root, seed, run_dir, max_iters: int = 4,
+                  timeout: float = 900.0) -> dict:
+    """Default holdout runner: one agent.loop run, no distillation."""
+    import glob
+    import subprocess
+    import sys
+
+    os.makedirs(run_dir, exist_ok=True)
+    provider = os.environ.get("KERNEL_AGENT_PROVIDER", "replay")
+    model = os.environ.get("KERNEL_AGENT_MODEL", "deepseek-chat")
+    base_url = os.environ.get("KERNEL_AGENT_BASE_URL", "https://api.deepseek.com/v1")
+    key_env = os.environ.get("KERNEL_AGENT_API_KEY_ENV", "DEEPSEEK_API_KEY")
+    device = os.environ.get("KERNEL_AGENT_DEVICE", "cpu")
+    cmd = [
+        sys.executable, "-m", "agent.loop", "--task", task_path,
+        "--provider", provider, "--model", model, "--base-url", base_url,
+        "--api-key-env", key_env, "--device", device,
+        "--knowledge-root", knowledge_root, "--out-dir", run_dir,
+        "--max-iters", str(int(max_iters)), "--timeout", str(timeout),
+        "--profiler", "off", "--no-distill", "--quiet",
+    ]
+    replay = os.environ.get("KERNEL_AGENT_REPLAY", "")
+    if provider == "replay" and replay:
+        cmd += ["--replay-file", replay]
+    if os.environ.get("KERNEL_AGENT_HARDWARE"):
+        cmd += ["--hardware", os.environ["KERNEL_AGENT_HARDWARE"]]
+    subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
+                   encoding="utf-8", errors="replace", timeout=timeout + 240)
+    metas = glob.glob(os.path.join(run_dir, "*", "meta.json"))
+    if not metas:
+        return {"status": "no_meta", "speedup": 0.0}
+    with open(sorted(metas)[-1], "r", encoding="utf-8") as fh:
+        meta = json.load(fh)
+    best = meta.get("best") or {}
+    return {"status": best.get("status"), "speedup": float(best.get("speedup") or 0.0),
+            "task": meta.get("task"), "seed": seed}
 def rollback_if_worse(root: str, before: dict, before_score: dict, after_score: dict,
                       epsilon: float = 0.01) -> dict:
     """Restore `before` when the holdout score dropped by more than epsilon."""

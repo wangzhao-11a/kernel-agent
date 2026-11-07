@@ -17,6 +17,14 @@ import time
 
 from . import device as dev
 
+# Bind the real clock at import: the report must never depend on the module
+# attribute `time`, which a solution could rebind to a fake clock.
+_PERF_COUNTER = time.perf_counter
+
+# A timed region where the module-level clock disagrees with the bound clock by
+# more than this factor is flagged; the worker turns the flag into a failure.
+CLOCK_DISAGREEMENT = 0.2
+
 DEFAULT_INPUT_SETS = 4
 MAX_INPUT_BYTES = 512 * 1024 * 1024
 
@@ -129,6 +137,7 @@ def benchmark(fn, inputs=None, device: str = "cpu", warmup: int = 25, rep: int =
     dev.sync(device)
 
     times = []
+    clock_anomalies = 0
     for i in range(int(rep)):
         if accelerator:
             # Global sync on both sides: the flush and any work from earlier
@@ -137,22 +146,31 @@ def benchmark(fn, inputs=None, device: str = "cpu", warmup: int = 25, rep: int =
             if buf is not None:
                 buf.zero_()
             dev.sync(device)
-            t0 = time.perf_counter()
+            t0 = _PERF_COUNTER()
+            a0 = time.perf_counter()
             fn(*sets[i % len(sets)])
+            a1 = time.perf_counter()
             dev.sync(device)
-            t1 = time.perf_counter()
+            t1 = _PERF_COUNTER()
         else:
             if buf is not None:
                 buf.zero_()
-            t0 = time.perf_counter()
+            t0 = _PERF_COUNTER()
+            a0 = time.perf_counter()
             fn(*sets[i % len(sets)])
-            t1 = time.perf_counter()
-        times.append((t1 - t0) * 1000.0)
+            a1 = time.perf_counter()
+            t1 = _PERF_COUNTER()
+        real = t1 - t0
+        audited = a1 - a0
+        if real > 1e-4 and abs(audited - real) > CLOCK_DISAGREEMENT * max(real, audited):
+            clock_anomalies += 1
+        times.append(real * 1000.0)
         _after(i)
 
     ordered = sorted(times)
     n = len(ordered)
     return {
+        "clock_anomalies": clock_anomalies,
         "median_ms": float(statistics.median(ordered)),
         "mean_ms": float(statistics.fmean(ordered)),
         "min_ms": float(ordered[0]),
