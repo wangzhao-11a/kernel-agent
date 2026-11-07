@@ -884,7 +884,8 @@ def run(x):
 
 def run(x):
     y = torch.softmax(x, dim=-1)
-    y.sum(dim=-1)   # extra pass; still the same result, just slower
+    for _ in range(5):
+        y = y.clone()   # stands in for the copies the fast path avoids
     return y
 """
     # invalid ablation: claims to remove contiguous_input but keeps the marker
