@@ -333,6 +333,7 @@ class MemoryStore:
         self.failures_path = os.path.join(self.root, FAILURES_FILE)
         self.skills_path = os.path.join(self.root, SKILLS_FILE)
         self.strategies_path = os.path.join(self.root, STRATEGIES_FILE)
+        self.notes_path = os.path.join(self.root, "notes.jsonl")
         self._tx_depth = 0
         self._load_files()
 
@@ -340,6 +341,7 @@ class MemoryStore:
         self.facts = _read_jsonl(self.facts_path)
         self.failures = _read_jsonl(self.failures_path)
         self.skills = _read_jsonl(self.skills_path)
+        self.notes = _read_jsonl(self.notes_path)
 
     @contextlib.contextmanager
     def transaction(self):
@@ -369,6 +371,7 @@ class MemoryStore:
         _write_jsonl(self.facts_path, sorted(self.facts, key=lambda r: r.get("id", "")))
         _write_jsonl(self.failures_path, sorted(self.failures, key=lambda r: r.get("id", "")))
         _write_jsonl(self.skills_path, sorted(self.skills, key=lambda r: r.get("id", "")))
+        _write_jsonl(self.notes_path, sorted(self.notes, key=lambda r: r.get("id", "")))
 
     @staticmethod
     def _next_id(rows: list, prefix: str) -> str:
@@ -584,6 +587,42 @@ class MemoryStore:
                     self.save()
                     return row
         return None
+
+    # ------------------------------------------------------------------ notes
+    def add_note(self, record: dict) -> dict:
+        """Append a process-level note (an agent's own inference, not a measurement).
+
+        Only the *format* is constrained: a statement and a trigger are required,
+        content is left to the model.  De-duplicated by statement hash; the
+        per-run cap (3 notes) is enforced by the caller.
+        """
+        statement = str(record.get("statement") or "").strip()
+        trigger = str(record.get("trigger") or "").strip()
+        if not statement:
+            raise ValueError("note.statement is required")
+        if not trigger:
+            raise ValueError("note.trigger is required (when does this note apply?)")
+        scope = dict(record.get("scope") or {})
+        key = "note:" + _hash(_norm(statement) + self._scope_key(scope))
+        with self.transaction():
+            existing = next((r for r in self.notes if r.get("key") == key), None)
+            if existing:
+                return existing
+            row = {
+                "id": record.get("id") or self._next_id(self.notes, "n"),
+                "key": key,
+                "statement": statement,
+                "trigger": trigger,
+                "scope": scope,
+                "confidence": "candidate",
+                "created": utc_now(),
+                "updated": utc_now(),
+                "run_id": str(record.get("run_id") or ""),
+                "evidence_runs": list(record.get("evidence_runs") or []),
+                "hash": _hash(_norm(statement)),
+            }
+            self.notes.append(row)
+            return row
 
     def promote_skill_from_run(self, run_dir: str, name: str, template_ref: str,
                                features: dict, preconditions=None, parameters=None,
@@ -820,6 +859,23 @@ class MemoryStore:
             used += extra
         if len(hits) == 0:
             lines.append("(no fact/failure/skill/strategy matched this scope)")
+        # Candidate notes (process-level experience) ride the same index, so a
+        # note written in one run is visible to the next one without inlining.
+        for note in self.notes:
+            matched, reasons, _score = scope_match(note.get("scope") or {}, features)
+            if not matched:
+                continue
+            what = str(note.get("statement") or "")
+            if len(what) > 120:
+                what = what[:120] + "…"
+            line = "- [NOTE %s] (%s) %s" % (note["id"], note.get("confidence") or "candidate", what)
+            why = "    why: %s | trigger: %s" % (", ".join(reasons), note.get("trigger") or "")
+            extra = len(line) + len(why) + 2
+            if used + extra > max_chars:
+                break
+            lines.append(line)
+            lines.append(why)
+            used += extra
         return "\n".join(lines)
 
     def context(self, features: dict, top_k: int = 3, max_chars: int = 7000, kinds=None) -> str:
