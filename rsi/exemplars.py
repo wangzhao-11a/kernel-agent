@@ -162,6 +162,27 @@ def retrieve_exemplars(root: str, feats: dict, hardware: str, top_k: int = 2,
     return [row for row, _score_value in scored[:top_k]]
 
 
+def render_exemplars_index(exemplars: list, max_chars: int = 900) -> str:
+    """Index-only exemplar view: one line per entry, source loaded on demand.
+
+    Code exemplars are the last thing that should be inlined in the first-turn
+    prompt.  The model fetches a body with {"action":"recall","id":"ex-<id>"}.
+    """
+    if not exemplars:
+        return ""
+    lines = ["## Code exemplars — index (load one with {\"action\":\"recall\",\"id\":\"ex-<id>\"})"]
+    used = len(lines[0]) + 1
+    for row in exemplars:
+        header = "- [EX %s] task=%s form=%s speedup=%.2fx bottleneck=%s" % (
+            row.get("id"), row.get("task"), row.get("form") or "unknown",
+            float(row.get("speedup") or 0.0), row.get("bottleneck") or "unknown")
+        if used + len(header) + 1 > max_chars:
+            break
+        lines.append(header)
+        used += len(header) + 1
+    return "\n".join(lines)
+
+
 def render_exemplars(exemplars: list, max_chars: int = 6000) -> str:
     """Render a budgeted few-shot block for the task prompt."""
     if not exemplars:
