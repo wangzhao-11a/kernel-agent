@@ -411,12 +411,27 @@ def run_cannbench(spec: CannBenchSpec, files: dict | None = None,
             result["status"] = "bench_error"
             result["error"] = "bench timed out"
             return _finish_run(result, started)
+        # Read the payload even when the bench exited non-zero: a bench that also
+        # checks correctness returns 1 for "wrong result", which is a correctness
+        # failure for the candidate, not an infrastructure error.  The agent needs
+        # the failing shapes, not "bench exited 1".
+        metrics = read_metrics_file(metrics_path) or parse_metrics(
+            _read_text(bench["log_path"]), nonce=nonce)
+        bad_cases = [row for row in (metrics.get("cases") or [])
+                     if row.get("correct") is False or row.get("passed") is False]
+        result["bench_cases_failed"] = len(bad_cases)
+        if bad_cases:
+            names = ["%s/%s" % (row.get("shape"), row.get("dtype")) for row in bad_cases[:5]]
+            result["status"] = "fail_correctness"
+            result["error"] = ("bench: %d/%d cases wrong (%s%s)"
+                               % (len(bad_cases), len(metrics.get("cases") or []),
+                                  ", ".join(names),
+                                  " ..." if len(bad_cases) > 5 else ""))
+            return _finish_run(result, started)
         if bench["returncode"] != 0:
             result["status"] = "bench_error"
             result["error"] = "bench exited %s" % bench["returncode"]
             return _finish_run(result, started)
-        metrics = read_metrics_file(metrics_path) or parse_metrics(
-            _read_text(bench["log_path"]), nonce=nonce)
         rounds = [{"round": 1, "speedup": metrics.get(spec.metric_key),
                    "duration_s": bench.get("duration_s")}]
         suspect = _metrics_suspect(metrics, bench.get("duration_s") or 0.0, spec.metric_key)
