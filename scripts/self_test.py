@@ -507,6 +507,53 @@ def check_unstable_kept(tmp):
     assert outcomes.get(online) == "success", report["evidence"]
     assert outcomes.get(tiling) == "neutral", report["evidence"]
     assert store.find_by_key("online_softmax")["stats"]["succeeded"] == 1
+def check_ablation_invalid_gates_contribution(tmp):
+    """An ablation that does not remove the practice cannot contribute.
+
+    Validity is a precondition for attribution.  Timing alone must not turn a
+    re-run of the same solution into "removing this practice made it slower".
+    """
+    from rsi.distill import distill_run
+    from rsi.store import StrategyStore
+
+    store = StrategyStore(os.path.join(tmp, "invalid_ablation_kb"))
+    online = store.find_by_key("online_softmax")["id"]
+    run_dir = os.path.join(tmp, "invalid_ablation_run")
+    best_path = write(os.path.join(run_dir, "best.py"), SOFTMAX_SOURCE)
+    meta = {
+        "task": "np_softmax", "device": "cpu", "hardware": "cpu",
+        "features": {"tags": ["softmax", "reduction"], "op_class": "reduction",
+                     "dtypes": ["float32"]},
+        "best": {"status": "pass", "speedup": 4.0, "path": best_path},
+    }
+    write(os.path.join(run_dir, "meta.json"), json.dumps(meta))
+    traj = {
+        "task": "np_softmax", "task_file": "", "hardware": "cpu", "device": "cpu",
+        "features": meta["features"], "best": meta["best"], "distilled": False,
+        "attempts": [
+            {"iter": 1, "status": "pass", "speedup": 4.0, "speedup_ci": [3.8, 4.2],
+             "solution": best_path, "strategies_declared": ["online softmax"],
+             "solution_source": SOFTMAX_SOURCE, "distilled": False},
+            # The variant still contains the practice (valid=False) but its
+            # interval is below the full solution's: without the validity gate
+            # this would be counted as a contribution.
+            {"iter": "ablation:%s" % online, "kind": "ablation", "ablation_of": online,
+             "status": "pass", "speedup": 1.0, "speedup_ci": [0.9, 1.1],
+             "ablation_valid": False,
+             "ablation_problem": "target practice still present in the variant",
+             "solution_source": SOFTMAX_SOURCE, "distilled": False},
+        ],
+    }
+    write(os.path.join(run_dir, "trajectory.json"), json.dumps(traj))
+    report = distill_run(run_dir, store=store)
+    rows = {row["strategy"]: row for row in report["evidence"]}
+    row = rows[online]
+    assert row["outcome"] == "neutral", row
+    assert row["ablation"]["valid"] is False, row
+    assert row["ablation"]["contributed"] is False, row
+    assert store.strategies[online]["stats"]["succeeded"] == 0
+
+
 def check_unstable_candidates_holdout_none(tmp):
     """holdout=None (unconfigured task) may reach candidate, never verified."""
     from rsi.store import StrategyStore
@@ -1760,6 +1807,7 @@ def main():
         check("p4: failure -> synthetic task -> scheduled cycle", lambda: check_p4_synth_and_schedule(tmp))
         check("p2: claimed-only declarations gain no evidence", lambda: check_p2_claimed_only(tmp))
         check("p2: ablation evidence gates success and combos", lambda: check_p2_ablation_end_to_end(tmp))
+        check("p2: invalid ablation cannot contribute", lambda: check_ablation_invalid_gates_contribution(tmp))
         check("p2: syntax errors do not count as strategy failures", lambda: check_p2_stage_failure(tmp))
         check("adversarial: cheat regression set (cache/patch/side-stream/view/reference)",
           lambda: check_adversarial_solutions(tmp))
