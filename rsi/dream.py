@@ -21,6 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from harness.noise import epsilon_for  # noqa: E402
 from rsi.memory import MemoryStore, utc_now  # noqa: E402
 from rsi.store import StrategyStore  # noqa: E402
 from rsi.trajectory import read_json, replay_trajectory  # noqa: E402
@@ -64,15 +65,26 @@ def _replay_one(run_dir: str, device: str, timeout: float):
     if matches != n:
         return "not_reproduced", replay
     # Status alone is not enough: a replay that lands outside the recorded CI is
-    # also a memory problem, not a reproducibility success.
-    outside = _outside_recorded_ci(run_dir, replay)
+    # also a memory problem, not a reproducibility success.  The band is padded
+    # by the device's calibrated noise (configs/noise.json): without that, a
+    # record at ~1.0x on CPU (eps=0.043) can never be reproduced, because two
+    # honest measurements differ by more than a tight CI even when nothing is
+    # wrong.  A fake record (99.0x or 7.8x) stays far outside any padded band.
+    outside = _outside_recorded_ci(run_dir, replay,
+                                   epsilon=epsilon_for(device=device))
     if outside:
         return "not_reproduced", replay
     return "reproduced", replay
 
 
-def _outside_recorded_ci(run_dir: str, replay: dict) -> bool:
-    """True when any replayed speedup falls outside its recorded speedup_ci."""
+def _outside_recorded_ci(run_dir: str, replay: dict, epsilon=None) -> bool:
+    """True when a replayed speedup is incompatible with its recorded interval.
+
+    The recorded CI covers the recorded measurement's sampling error, not the
+    difference between two independent honest measurements.  The band is
+    therefore padded by epsilon (relative to the recorded midpoint) when the
+    device's noise amplitude is known.
+    """
     path = os.path.join(run_dir, "attempts.jsonl")
     if not os.path.isfile(path):
         return False
@@ -92,7 +104,11 @@ def _outside_recorded_ci(run_dir: str, replay: dict) -> bool:
             value = float(value)
         except (TypeError, ValueError):
             continue
-        if value < float(ci[0]) or value > float(ci[1]):
+        lo, hi = float(ci[0]), float(ci[1])
+        padding = 0.0
+        if epsilon is not None:
+            padding = abs(float(epsilon)) * abs((lo + hi) / 2.0)
+        if value < lo - padding or value > hi + padding:
             return True
     return False
 
