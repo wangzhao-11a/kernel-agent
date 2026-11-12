@@ -218,6 +218,12 @@ def run_cycle(args) -> dict:
     holdout_paths = [p for p in (_find_task_path(args.tasks_root, name) for name in holdout_tasks) if p]
 
     before = version.snapshot(args.knowledge_root, os.path.join(args.versions_root, "snapshots"))
+    # Dream pass: replay verified records and demote non-reproducing ones.  Placed
+    # after the snapshot so a rollback to `before` also undoes the dream writes.
+    from rsi.dream import dream
+    dream_report = dream(args.knowledge_root, runs_root=args.runs_root,
+                         apply=True, allow_promote=False, device=args.device,
+                         timeout=args.timeout)
     # Real re-evaluation, not a historical average: same holdout tasks, the same
     # runner, one score per knowledge snapshot.
     before_kb = os.path.join(cycle_dir, "kb_before")
@@ -289,6 +295,7 @@ def run_cycle(args) -> dict:
             "final_version": final_version,
             "rollback": rollback,
             "git": git,
+            "dream": dream_report,
         },
         "holdout_score": {"before": score_before, "after": score_after,
                           "epsilon": args.rollback_eps},
