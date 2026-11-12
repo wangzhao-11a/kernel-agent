@@ -47,7 +47,7 @@ from rsi.cards import read_card, render_candidates, retrieve_cards  # noqa: E402
 from rsi.detectors import match as detector_match  # noqa: E402
 from rsi.detectors import validate_ablation  # noqa: E402
 from rsi.distill import attribute_from_source, distill_run, expand_declared, resolve_declared  # noqa: E402
-from rsi.exemplars import render_exemplars, retrieve_exemplars  # noqa: E402
+from rsi.exemplars import render_exemplars_index, retrieve_exemplars  # noqa: E402
 from rsi.features import hardware_from_device, task_features  # noqa: E402
 from rsi.forms import form_for, form_hint  # noqa: E402
 from rsi.memory import MemoryStore  # noqa: E402
@@ -94,6 +94,60 @@ def _as_float(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _recall_record(store, mem, record_id: str, knowledge_root: str):
+    """Return the full JSON of one memory record by id or category prefix.
+
+    Accepts the exact ids shown in the index (fact-0001, fail-0002, sk-0003,
+    stg-0004, ex-<hash>) and the short category prefixes f-/fl-/sk-/s-/ex-,
+    which fetch the newest record of that kind.  Returns None when nothing
+    matches.
+    """
+    rid = str(record_id or "").strip()
+    if not rid:
+        return None
+    # Category aliases used by the plan's recall contract.
+    aliases = {
+        "f-": "fact", "fl-": "failure", "sk-": "skill", "s-": "strategy", "ex-": "exemplar",
+    }
+    if rid in aliases:
+        kind = aliases[rid]
+        if mem is not None:
+            rows = {"fact": mem.facts, "failure": mem.failures, "skill": mem.skills}.get(kind)
+            if rows:
+                return json.dumps(rows[-1], ensure_ascii=False, indent=2)
+        if kind == "strategy" and store is not None and store.strategies:
+            row = store.strategies[sorted(store.strategies)[-1]]
+            return json.dumps(row, ensure_ascii=False, indent=2)
+        if kind == "exemplar":
+            try:
+                from rsi.exemplars import _read_jsonl, EXEMPLARS_FILE
+                rows = _read_jsonl(os.path.join(knowledge_root, EXEMPLARS_FILE))
+            except Exception:
+                return None
+            if rows:
+                return json.dumps(rows[-1], ensure_ascii=False, indent=2)
+        return None
+
+    # Exact id lookup across every pool.
+    if mem is not None:
+        for rows in (mem.facts, mem.failures, mem.skills):
+            for row in rows:
+                if str(row.get("id") or "") == rid:
+                    return json.dumps(row, ensure_ascii=False, indent=2)
+    if store is not None:
+        row = store.strategies.get(rid)
+        if row is not None:
+            return json.dumps(row, ensure_ascii=False, indent=2)
+    try:
+        from rsi.exemplars import _read_jsonl, EXEMPLARS_FILE
+        for row in _read_jsonl(os.path.join(knowledge_root, EXEMPLARS_FILE)):
+            if str(row.get("id") or "") == rid:
+                return json.dumps(row, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return None
 
 
 def _write_meta(run_dir: str, meta: dict) -> None:
@@ -203,7 +257,7 @@ def main(argv=None) -> int:
     combos = combos_for(store, [s["id"] for s, _score, _match in matched]) if use_rsi else []
     priors = priors_block(feats, hardware, matched, combos) if use_rsi else ""
     exemplars = retrieve_exemplars(args.knowledge_root, feats, hardware, top_k=2) if use_rsi else []
-    exemplar_block = render_exemplars(exemplars)
+    exemplar_block = render_exemplars_index(exemplars)
     form = form_for(feats)
     form_block = form_hint(feats)
     mem = MemoryStore(args.knowledge_root) if (use_rsi and not args.no_memory) else None
@@ -221,7 +275,7 @@ def main(argv=None) -> int:
     if not mem_prov.get("valid"):
         # mechanics-only run: file failures under cpu, not the claimed NPU scope
         mem_write_features["soc"] = "cpu"
-    memory_block = mem.context(mem_features, kinds=("fact", "failure", "skill")) if mem else ""
+    memory_block = mem.context_index(mem_features, kinds=("fact", "failure", "skill")) if mem else ""
     kb_cards = retrieve_cards(args.kb_root, feats, top_k=args.kb_cards, required_form=form) if use_rsi else []
     kb_block = render_candidates(kb_cards)
     kb_auto = None
@@ -472,6 +526,21 @@ def main(argv=None) -> int:
                 message = "No solution submitted yet. Use write_solution first."
             else:
                 message = evaluate(current_path, iteration, [], None)
+        elif kind == "recall":
+            record_id = str(action.get("id") or "").strip()
+            if not record_id:
+                message = "recall needs an \"id\" (one of f-/fl-/sk-/s-/ex-)."
+            else:
+                body = _recall_record(store, mem, record_id, args.knowledge_root)
+                if body is None:
+                    message = ("No memory record with id %r. Expected a fact (f-), failure (fl-), "
+                               "skill (sk-), strategy (s-) or exemplar (ex-) id from the index." % record_id)
+                else:
+                    log("recall", "read %s (%d chars)" % (record_id, len(body)),
+                        meta={"iteration": iteration, "id": record_id})
+                    message = ("Memory record %s:\n```json\n%s\n```\n"
+                               "Apply what fits this task, then reply with exactly one JSON action."
+                               % (record_id, body))
         elif kind == "knowledge":
             card_id = str(action.get("id") or "").strip()
             if not card_id:
