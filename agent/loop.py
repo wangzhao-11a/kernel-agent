@@ -287,6 +287,7 @@ def main(argv=None) -> int:
             kb_block = (kb_block + "\n\n### Auto-loaded top card (best match for a kernel-form task)\n"
                         "```markdown\n" + body + "\n```")
     kb_reads = []
+    note_count = 0
     attempted_ids = set()
 
     api_key = llm_mod.resolve_api_key(provider, explicit=args.api_key or "", env_name=api_key_env)
@@ -541,6 +542,33 @@ def main(argv=None) -> int:
                     message = ("Memory record %s:\n```json\n%s\n```\n"
                                "Apply what fits this task, then reply with exactly one JSON action."
                                % (record_id, body))
+        elif kind == "note":
+            statement = str(action.get("statement") or "").strip()
+            trigger = str(action.get("trigger") or "").strip()
+            if not statement or not trigger:
+                message = "note needs both \"statement\" and \"trigger\" (when does this note apply?)."
+            elif note_count >= 3:
+                message = "note rejected: at most 3 notes per run (this is the %dth)." % (note_count + 1)
+            elif mem is None:
+                message = "note is unavailable: operator memory is disabled (--no-memory)."
+            else:
+                scope = {"soc": [mem_write_features.get("soc") or hardware],
+                         "dtype": list(mem_write_features.get("dtype") or []),
+                         "form": list(mem_write_features.get("form") or [])}
+                try:
+                    row = mem.add_note({
+                        "statement": statement,
+                        "trigger": trigger,
+                        "scope": scope,
+                        "run_id": run_name,
+                    })
+                    note_count += 1
+                    log("note", json.dumps(row, ensure_ascii=False),
+                        meta={"iteration": iteration, "id": row.get("id")})
+                    message = ("NOTE RECORDED %s (candidate). It will be reviewed by the dream pass; "
+                               "keep iterating." % row["id"])
+                except ValueError as exc:
+                    message = "note rejected: %s" % exc
         elif kind == "knowledge":
             card_id = str(action.get("id") or "").strip()
             if not card_id:
