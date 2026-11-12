@@ -15,6 +15,7 @@ import time
 
 from .detectors import detector_for
 from .practices import PRACTICES
+from rsi._io import _FileLock, write_jsonl as _write_jsonl
 
 DEFAULT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge")
 
@@ -37,13 +38,6 @@ def _read_jsonl(path: str) -> list:
             except ValueError:
                 continue
     return rows
-
-
-def _write_jsonl(path: str, rows: list) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 class StrategyStore:
@@ -87,8 +81,19 @@ class StrategyStore:
         self.save()
 
     def save(self) -> None:
-        _write_jsonl(self.strategies_path, [self.strategies[k] for k in sorted(self.strategies)])
-        _write_jsonl(self.combos_path, [self.combos[k] for k in sorted(self.combos)])
+        with _FileLock(os.path.join(self.root, ".knowledge.lock")):
+            disk_strategies = {}
+            for row in _read_jsonl(self.strategies_path):
+                if row.get("id"):
+                    disk_strategies[row["id"]] = row
+            disk_strategies.update(self.strategies)
+            disk_combos = {}
+            for row in _read_jsonl(self.combos_path):
+                if row.get("id"):
+                    disk_combos[row["id"]] = row
+            disk_combos.update(self.combos)
+            _write_jsonl(self.strategies_path, [disk_strategies[k] for k in sorted(disk_strategies)])
+            _write_jsonl(self.combos_path, [disk_combos[k] for k in sorted(disk_combos)])
 
     # ---------------------------------------------------------------- strategies
     def _next_id(self, prefix: str) -> str:

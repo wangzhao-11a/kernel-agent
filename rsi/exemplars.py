@@ -42,17 +42,18 @@ def update_descendant_gain(root: str, exemplar_ids, attempt_speedup: float) -> l
     if not ids:
         return []
     path = os.path.join(root, EXEMPLARS_FILE)
-    rows = _read_jsonl(path)
-    updated = []
-    for row in rows:
-        if row.get("id") not in ids:
-            continue
-        gain = float(attempt_speedup or 0.0) - float(row.get("speedup") or 0.0)
-        row["descendant_gain"] = round(max(float(row.get("descendant_gain") or 0.0), gain), 4)
-        row["updated"] = _now()
-        updated.append(row)
-    if updated:
-        _write_jsonl(path, rows)
+    with _FileLock(path + ".lock"):
+        rows = _read_jsonl(path)
+        updated = []
+        for row in rows:
+            if row.get("id") not in ids:
+                continue
+            gain = float(attempt_speedup or 0.0) - float(row.get("speedup") or 0.0)
+            row["descendant_gain"] = round(max(float(row.get("descendant_gain") or 0.0), gain), 4)
+            row["updated"] = _now()
+            updated.append(row)
+        if updated:
+            _write_jsonl(path, rows)
     return updated
 
 
@@ -72,11 +73,7 @@ def _read_jsonl(path: str) -> list:
     return rows
 
 
-def _write_jsonl(path: str, rows: list) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        for row in rows:
-            print(json.dumps(row, ensure_ascii=False), file=fh)
+from rsi._io import _FileLock, write_jsonl as _write_jsonl
 
 
 def record_exemplar(root: str, task: str, source: str, speedup: float, hardware: str = "",
@@ -85,59 +82,60 @@ def record_exemplar(root: str, task: str, source: str, speedup: float, hardware:
                     evidence_valid: bool = None) -> dict:
     """Store a winning solution (idempotent by content hash, one per behavior cell)."""
     path = os.path.join(root, EXEMPLARS_FILE)
-    rows = _read_jsonl(path)
-    digest = hashlib.sha256((source or "").encode("utf-8")).hexdigest()[:16]
-    form = _form(source)
-    bottleneck = _bottleneck(profile_top)
-    cell = "%s|%s" % (form, bottleneck)
-    for row in rows:
-        if row.get("id") == digest:
-            row["speedup"] = round(max(float(row.get("speedup") or 0.0), float(speedup)), 4)
-            row["form"] = form
-            row["bottleneck"] = bottleneck
-            row["cell"] = cell
-            if device_class:
-                row["device_class"] = device_class
-            if evidence_valid is not None:
-                row["evidence_valid"] = bool(evidence_valid)
-            row["updated"] = _now()
-            _write_jsonl(path, rows)
-            return row
-    row = {
-        "id": digest,
-        "task": task,
-        "speedup": round(float(speedup), 4),
-        "hardware": hardware,
-        "device_class": device_class,
-        "evidence_valid": evidence_valid,
-        "dtypes": list(dtypes or []),
-        "op_class": op_class,
-        "tags": list(tags or []),
-        "strategies": list(strategies or []),
-        "profile_top": list(profile_top or []),
-        "form": form,
-        "bottleneck": bottleneck,
-        "cell": cell,
-        "descendant_gain": 0.0,
-        "run_ref": run_ref,
-        "source": (source or "")[:MAX_SOURCE_CHARS],
-        "created": _now(),
-        "updated": _now(),
-    }
-    rows.append(row)
-    # Quality-diversity archive: keep the fastest example per (task, hardware,
-    # form, bottleneck) cell instead of a global top-N list.
-    keep, cells = [], {}
-    for candidate in sorted(rows, key=lambda r: -float(r.get("speedup") or 0.0)):
-        key = (candidate.get("task"), candidate.get("hardware"),
-               candidate.get("form") or "torch_fused",
-               candidate.get("bottleneck") or "unknown")
-        if key in cells:
-            continue
-        cells[key] = candidate
-        keep.append(candidate)
-    _write_jsonl(path, keep)
-    return next((candidate for candidate in keep if candidate.get("id") == digest), row)
+    with _FileLock(path + ".lock"):
+        rows = _read_jsonl(path)
+        digest = hashlib.sha256((source or "").encode("utf-8")).hexdigest()[:16]
+        form = _form(source)
+        bottleneck = _bottleneck(profile_top)
+        cell = "%s|%s" % (form, bottleneck)
+        for row in rows:
+            if row.get("id") == digest:
+                row["speedup"] = round(max(float(row.get("speedup") or 0.0), float(speedup)), 4)
+                row["form"] = form
+                row["bottleneck"] = bottleneck
+                row["cell"] = cell
+                if device_class:
+                    row["device_class"] = device_class
+                if evidence_valid is not None:
+                    row["evidence_valid"] = bool(evidence_valid)
+                row["updated"] = _now()
+                _write_jsonl(path, rows)
+                return row
+        row = {
+            "id": digest,
+            "task": task,
+            "speedup": round(float(speedup), 4),
+            "hardware": hardware,
+            "device_class": device_class,
+            "evidence_valid": evidence_valid,
+            "dtypes": list(dtypes or []),
+            "op_class": op_class,
+            "tags": list(tags or []),
+            "strategies": list(strategies or []),
+            "profile_top": list(profile_top or []),
+            "form": form,
+            "bottleneck": bottleneck,
+            "cell": cell,
+            "descendant_gain": 0.0,
+            "run_ref": run_ref,
+            "source": (source or "")[:MAX_SOURCE_CHARS],
+            "created": _now(),
+            "updated": _now(),
+        }
+        rows.append(row)
+        # Quality-diversity archive: keep the fastest example per (task, hardware,
+        # form, bottleneck) cell instead of a global top-N list.
+        keep, cells = [], {}
+        for candidate in sorted(rows, key=lambda r: -float(r.get("speedup") or 0.0)):
+            key = (candidate.get("task"), candidate.get("hardware"),
+                   candidate.get("form") or "torch_fused",
+                   candidate.get("bottleneck") or "unknown")
+            if key in cells:
+                continue
+            cells[key] = candidate
+            keep.append(candidate)
+        _write_jsonl(path, keep)
+        return next((candidate for candidate in keep if candidate.get("id") == digest), row)
 
 
 def _score(row: dict, feats: dict, hardware: str) -> float:
