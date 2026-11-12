@@ -209,8 +209,14 @@ def distill_run(run_dir: str, store: StrategyStore = None, verify: bool = False,
         valid = row.get("ablation_valid", True)
         performed = bool(status in ("pass", "pass_unstable") and without_ci
                          and len(without_ci) >= 2 and valid)
-        contributed = bool(status in ("pass", "pass_unstable") and full_ci
-                           and len(full_ci) >= 2
+        # Validity is a precondition, not a separate label: a variant that
+        # still contains the practice (or removed an unrelated one) measures
+        # something else, so its timing cannot attribute the gain.  Without
+        # this, a re-run of the same solution that happened to look 1% slower
+        # would count as ablation evidence.
+        contributed = bool(status in ("pass", "pass_unstable") and valid and full_ci
+                           and len(full_ci) >= 2 and without_ci
+                           and len(without_ci) >= 2
                            and float(without_ci[1]) < float(full_ci[0]))
         return ({
             "performed": bool(performed),
