@@ -49,83 +49,9 @@ CONFIDENCE_WEIGHT = {"verified": 1.0, "candidate": 0.6, "seed": 0.35, "refuted":
 AUTHORITY_WEIGHT = {"code": 1.0, "human": 1.0, "experiment": 0.85, "llm": 0.35}
 
 
-class MemoryLockError(RuntimeError):
-    pass
-
-
-class _FileLock:
-    """Cross-process lock for the memory JSONL files.
-
-    Multiple agent runs (different cards/containers) may distill at the same time.
-    Without a lock each process does load -> mutate -> save and silently drops the
-    others' updates.  The lock file contains the holder pid; a stale lock (crashed
-    process) is removed automatically.
-    """
-
-    def __init__(self, path: str, timeout: float = 20.0, poll: float = 0.05):
-        self.path = path
-        self.timeout = timeout
-        self.poll = poll
-        self.acquired = False
-
-    @staticmethod
-    def _pid_alive(pid: int) -> bool:
-        if pid <= 0:
-            return False
-        if os.name == "nt":
-            try:
-                out = subprocess.run(["tasklist", "/FI", "PID eq %d" % pid],
-                                     capture_output=True, text=True, timeout=10)
-                return str(pid) in out.stdout
-            except Exception:
-                return False
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
-
-    def __enter__(self):
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        deadline = time.time() + self.timeout
-        while True:
-            try:
-                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
-                try:
-                    with open(self.path, "r", encoding="utf-8") as fh:
-                        held = json.load(fh)
-                except (OSError, ValueError):
-                    held = {}
-                pid = int(held.get("pid") or 0)
-                if not self._pid_alive(pid):
-                    try:
-                        os.remove(self.path)
-                    except OSError:
-                        pass
-                    continue
-                if time.time() >= deadline:
-                    raise MemoryLockError("memory lock held by pid %s: %s" % (pid, self.path))
-                time.sleep(self.poll)
-                continue
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump({"pid": os.getpid(), "created": utc_now()}, fh)
-            self.acquired = True
-            return self
-
-    def __exit__(self, *exc):
-        if self.acquired:
-            try:
-                os.remove(self.path)
-            except OSError:
-                pass
-            self.acquired = False
-
+from rsi._io import MemoryLockError, _FileLock, utc_now, write_jsonl as _write_jsonl  # noqa: E402
 
 # --------------------------------------------------------------------------- utils
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
 
 def _norm(value) -> str:
     return " ".join(str(value or "").lower().split())
@@ -170,15 +96,6 @@ def _read_jsonl(path: str) -> list:
             except ValueError:
                 continue
     return rows
-
-
-def _write_jsonl(path: str, rows: list) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    os.replace(tmp, path)
 
 
 def _hash(text: str, n: int = 16) -> str:
@@ -416,6 +333,7 @@ class MemoryStore:
         self.failures_path = os.path.join(self.root, FAILURES_FILE)
         self.skills_path = os.path.join(self.root, SKILLS_FILE)
         self.strategies_path = os.path.join(self.root, STRATEGIES_FILE)
+        self.notes_path = os.path.join(self.root, "notes.jsonl")
         self._tx_depth = 0
         self._load_files()
 
@@ -423,6 +341,7 @@ class MemoryStore:
         self.facts = _read_jsonl(self.facts_path)
         self.failures = _read_jsonl(self.failures_path)
         self.skills = _read_jsonl(self.skills_path)
+        self.notes = _read_jsonl(self.notes_path)
 
     @contextlib.contextmanager
     def transaction(self):
@@ -452,6 +371,7 @@ class MemoryStore:
         _write_jsonl(self.facts_path, sorted(self.facts, key=lambda r: r.get("id", "")))
         _write_jsonl(self.failures_path, sorted(self.failures, key=lambda r: r.get("id", "")))
         _write_jsonl(self.skills_path, sorted(self.skills, key=lambda r: r.get("id", "")))
+        _write_jsonl(self.notes_path, sorted(self.notes, key=lambda r: r.get("id", "")))
 
     @staticmethod
     def _next_id(rows: list, prefix: str) -> str:
@@ -668,6 +588,42 @@ class MemoryStore:
                     return row
         return None
 
+    # ------------------------------------------------------------------ notes
+    def add_note(self, record: dict) -> dict:
+        """Append a process-level note (an agent's own inference, not a measurement).
+
+        Only the *format* is constrained: a statement and a trigger are required,
+        content is left to the model.  De-duplicated by statement hash; the
+        per-run cap (3 notes) is enforced by the caller.
+        """
+        statement = str(record.get("statement") or "").strip()
+        trigger = str(record.get("trigger") or "").strip()
+        if not statement:
+            raise ValueError("note.statement is required")
+        if not trigger:
+            raise ValueError("note.trigger is required (when does this note apply?)")
+        scope = dict(record.get("scope") or {})
+        key = "note:" + _hash(_norm(statement) + self._scope_key(scope))
+        with self.transaction():
+            existing = next((r for r in self.notes if r.get("key") == key), None)
+            if existing:
+                return existing
+            row = {
+                "id": record.get("id") or self._next_id(self.notes, "n"),
+                "key": key,
+                "statement": statement,
+                "trigger": trigger,
+                "scope": scope,
+                "confidence": "candidate",
+                "created": utc_now(),
+                "updated": utc_now(),
+                "run_id": str(record.get("run_id") or ""),
+                "evidence_runs": list(record.get("evidence_runs") or []),
+                "hash": _hash(_norm(statement)),
+            }
+            self.notes.append(row)
+            return row
+
     def promote_skill_from_run(self, run_dir: str, name: str, template_ref: str,
                                features: dict, preconditions=None, parameters=None,
                                validation=None, measured=None, language: str = "") -> dict:
@@ -866,6 +822,62 @@ class MemoryStore:
             out.append(hit)
         return out
 
+    def context_index(self, features: dict, top_k: int = 3, max_chars: int = 1400,
+                      kinds=None) -> str:
+        """Index-only view of operator memory: one line per record, no bodies.
+
+        The first-turn prompt should carry pointers, not full records.  A model
+        that needs the details asks for them with {"action":"recall","id":...}.
+        Summary text is capped at 120 characters and the whole block never
+        exceeds `max_chars`.
+        """
+        hits = self.retrieve(features, top_k=top_k, kinds=kinds)
+        features = normalize_features(features)
+        header = "## Operator memory — index (load one with {\"action\":\"recall\",\"id\":\"<id>\"})"
+        # A tiny max_chars must not overflow the header itself.
+        if len(header) + 1 > max_chars:
+            return header[:max_chars]
+        lines = [header]
+        labels = {"fact": "FACT", "failure": "FAILURE", "skill": "SKILL", "strategy": "STRATEGY"}
+        used = len(header) + 1
+        for hit in hits:
+            record = hit["record"]
+            kind = hit["type"]
+            what = (record.get("statement") or record.get("signature")
+                    or record.get("name") or "")
+            if len(what) > 120:
+                what = what[:120] + "…"
+            line = "- [%s %s] (%s) %s" % (
+                labels[kind], hit["id"],
+                record.get("confidence") or record.get("status") or "candidate", what)
+            why = "    why: %s" % ", ".join(hit["why"])
+            extra = len(line) + len(why) + 2
+            if used + extra > max_chars:
+                break
+            lines.append(line)
+            lines.append(why)
+            used += extra
+        if len(hits) == 0:
+            lines.append("(no fact/failure/skill/strategy matched this scope)")
+        # Candidate notes (process-level experience) ride the same index, so a
+        # note written in one run is visible to the next one without inlining.
+        for note in self.notes:
+            matched, reasons, _score = scope_match(note.get("scope") or {}, features)
+            if not matched:
+                continue
+            what = str(note.get("statement") or "")
+            if len(what) > 120:
+                what = what[:120] + "…"
+            line = "- [NOTE %s] (%s) %s" % (note["id"], note.get("confidence") or "candidate", what)
+            why = "    why: %s | trigger: %s" % (", ".join(reasons), note.get("trigger") or "")
+            extra = len(line) + len(why) + 2
+            if used + extra > max_chars:
+                break
+            lines.append(line)
+            lines.append(why)
+            used += extra
+        return "\n".join(lines)
+
     def context(self, features: dict, top_k: int = 3, max_chars: int = 7000, kinds=None) -> str:
         hits = self.retrieve(features, top_k=top_k, kinds=kinds)
         features = normalize_features(features)
@@ -873,6 +885,7 @@ class MemoryStore:
             return "## Operator memory\n(no fact/failure/skill/strategy matched this scope)"
         lines = ["## Operator memory (scope-matched; apply only what matches the current run)"]
         labels = {"fact": "FACT", "failure": "FAILURE", "skill": "SKILL", "strategy": "STRATEGY"}
+        used = len(lines[0]) + 1
         for hit in hits:
             record = hit["record"]
             kind = hit["type"]
@@ -882,27 +895,31 @@ class MemoryStore:
                 what = record.get("statement") or ""
             if len(what) > 260:
                 what = what[:260] + "…"
-            lines.append("- [%s %s] (%s) %s" % (
+            block = ["- [%s %s] (%s) %s" % (
                 labels[kind], hit["id"],
-                record.get("confidence") or record.get("status") or "candidate", what))
-            lines.append("    why: %s" % ", ".join(hit["why"]))
+                record.get("confidence") or record.get("status") or "candidate", what)]
+            block.append("    why: %s" % ", ".join(hit["why"]))
             if kind == "fact" and record.get("authority"):
-                lines.append("    authority: %s" % record["authority"])
+                block.append("    authority: %s" % record["authority"])
             if kind == "failure":
                 repro = record.get("minimal_repro") or {}
                 if repro:
-                    lines.append("    repro: %s" % json.dumps(repro, ensure_ascii=False)[:240])
+                    block.append("    repro: %s" % json.dumps(repro, ensure_ascii=False)[:240])
                 if record.get("workaround"):
-                    lines.append("    workaround: %s" % str(record["workaround"])[:240])
+                    block.append("    workaround: %s" % str(record["workaround"])[:240])
             if kind == "skill":
                 measured = record.get("measured") or {}
                 if measured:
-                    lines.append("    measured: %s" % json.dumps(measured, ensure_ascii=False)[:200])
+                    block.append("    measured: %s" % json.dumps(measured, ensure_ascii=False)[:200])
                 if record.get("template_ref"):
-                    lines.append("    template: `%s`" % record["template_ref"])
-            text = "\n".join(lines)
-            if len(text) > max_chars:
+                    block.append("    template: `%s`" % record["template_ref"])
+            extra = sum(len(line) + 1 for line in block)
+            # Hard cap: check before appending, not by re-joining every line each
+            # iteration (the old loop was O(n^2) and could exceed max_chars).
+            if used + extra > max_chars:
                 break
+            lines.extend(block)
+            used += extra
         return "\n".join(lines)
 
     # ------------------------------------------------------------------ audit

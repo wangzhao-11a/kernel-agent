@@ -16,7 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_VERSIONS = os.path.join(ROOT, "runs", "knowledge_versions")
 KNOWLEDGE_FILES = (
     "strategies.jsonl", "combos.jsonl", "exemplars.jsonl",
-    "facts.jsonl", "failures.jsonl", "skills.jsonl",
+    "facts.jsonl", "failures.jsonl", "skills.jsonl", "notes.jsonl",
 )
 
 

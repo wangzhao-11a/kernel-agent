@@ -100,7 +100,8 @@ def _calibration_note(matched: list) -> str:
             % (mean_error, direction, abs(bias)))
 
 
-def priors_block(feats: dict, hardware: str, matched: list, combos: list, attempted=()) -> str:
+def priors_block(feats: dict, hardware: str, matched: list, combos: list, attempted=(),
+                 max_chars: int = 1400) -> str:
     lines = [
         "## Tuning priors (retrieved from the strategy pool by condition match)",
         "matching context: hardware=%s | op_class=%s | dtypes=%s | tags=%s" % (
@@ -111,6 +112,7 @@ def priors_block(feats: dict, hardware: str, matched: list, combos: list, attemp
         lines.append("(nothing in the pool matches this task yet — establish working practices and declare them so they can be reused)")
         return "\n".join(lines)
     attempted = set(attempted)
+    used = sum(len(line) + 1 for line in lines)
     for strategy, _score, _match in matched:
         stats = strategy.get("stats") or {}
         applied = int(stats.get("applied") or 0)
@@ -132,20 +134,33 @@ def priors_block(feats: dict, hardware: str, matched: list, combos: list, attemp
             cond_bits.append("dtype=%s" % ",".join(cond["dtypes"]))
         if cond.get("refined_note"):
             cond_bits.append("refined: %s" % cond["refined_note"])
-        lines.append("- [%s] %s" % (strategy["id"], strategy["statement"]))
-        lines.append("    expected ~%.2fx | %s | conditions: %s | confidence: %s%s" % (
+        statement = str(strategy["statement"])
+        if len(statement) > 100:
+            statement = statement[:100] + "…"
+        block = ["- [%s] %s" % (strategy["id"], statement)]
+        block.append("    expected ~%.2fx | %s | conditions: %s | confidence: %s%s" % (
             float((strategy.get("expected") or {}).get("speedup") or 1.0),
             "; ".join(marks) or "no history yet",
             ", ".join(cond_bits) or "any",
             strategy.get("confidence"),
             " | already attempted this run" if strategy["id"] in attempted else ""))
-    if combos:
+        extra = sum(len(line) + 1 for line in block)
+        if used + extra > max_chars:
+            break
+        lines.extend(block)
+        used += extra
+    if combos and used < max_chars:
         lines.append("Combination rules (practices that historically co-occurred with gains):")
+        used += len(lines[-1]) + 1
         for combo in combos[:3]:
             stats = combo.get("stats") or {}
-            lines.append("- [%s] %s -> best measured %.2fx (applied %sx)" % (
+            line = "- [%s] %s -> best measured %.2fx (applied %sx)" % (
                 combo["id"], " + ".join(combo.get("members") or []),
-                float(stats.get("best_speedup") or 0.0), stats.get("applied")))
+                float(stats.get("best_speedup") or 0.0), stats.get("applied"))
+            if used + len(line) + 1 > max_chars:
+                break
+            lines.append(line)
+            used += len(line) + 1
     lines.append("In write_solution include \"strategies\" (names or ids you applied) and "
                  "\"expected_speedup\" (your prediction): they update this pool for later tasks.")
     note = _calibration_note(matched)

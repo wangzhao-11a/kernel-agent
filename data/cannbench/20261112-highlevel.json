@@ -1,0 +1,75 @@
+{
+ "date": "2026-11-12",
+ "device": "Ascend910B4-1",
+ "host": "m18 kylin10-6018",
+ "container": "deepinfer-real",
+ "cann": "9.1.0",
+ "torch": "2.10.0+cpu",
+ "torch_npu": "2.10.0.post4",
+ "model": "deepseek-chat",
+ "method": "official-style 8-case correctness + command bench (8 shapes, 3 bench rounds, median, bootstrap 95% CI)",
+ "tasks": {
+  "kv_cache_append": {
+   "vendor": {"status": "pass", "cases_passed": 8, "cases_total": 8,
+              "speedup": 0.0771, "speedup_ci": [0.0698, 0.0781],
+              "total_speedup": 0.0729, "worst_speedup": 0.0435,
+              "baseline_ms": 1.520182, "candidate_ms": 20.845952},
+   "agent_final": {"status": "pass", "cases_passed": 8, "cases_total": 8,
+                   "speedup": 1.2334, "speedup_ci": [1.2236, 1.2754],
+                   "total_speedup": 1.0392, "worst_speedup": 0.3995,
+                   "baseline_ms": 1.53419, "candidate_ms": 1.476296,
+                   "iterations": 8, "distill": {"evidence": 9, "created": 1, "skipped": 2}},
+   "agent_over_vendor": 16.0,
+   "cases": [
+    {"shape": [1, 1024, 8, 128, 128], "dtype": "float16", "agent_speedup": 2.8535},
+    {"shape": [1, 2048, 8, 128, 256], "dtype": "float16", "agent_speedup": 1.5067},
+    {"shape": [2, 1024, 8, 128, 256], "dtype": "bfloat16", "agent_speedup": 1.5121},
+    {"shape": [1, 4096, 4, 128, 512], "dtype": "bfloat16", "agent_speedup": 0.7969},
+    {"shape": [8, 512, 8, 64, 512], "dtype": "float16", "agent_speedup": 0.8119},
+    {"shape": [4, 1024, 16, 64, 256], "dtype": "float16", "agent_speedup": 1.4858},
+    {"shape": [1, 8192, 2, 128, 1024], "dtype": "bfloat16", "agent_speedup": 0.3995},
+    {"shape": [2, 2048, 8, 64, 128], "dtype": "bfloat16", "agent_speedup": 2.805}
+   ]
+  },
+  "moe_gating_top_k_softmax": {
+   "vendor": {"status": "pass", "cases_passed": 8, "cases_total": 8,
+              "speedup": 0.0903, "speedup_ci": [0.0871, 0.0904],
+              "total_speedup": 0.0921, "worst_speedup": 0.018,
+              "baseline_ms": 2.683986, "candidate_ms": 29.142982},
+   "agent_final": {"status": "pass", "cases_passed": 8, "cases_total": 8,
+                   "speedup": 0.2424, "speedup_ci": [0.2399, 0.2437],
+                   "total_speedup": 0.2704, "worst_speedup": 0.0818,
+                   "baseline_ms": 2.687078, "candidate_ms": 9.938064,
+                   "iterations": 24, "distill": {"evidence": 5, "created": 0, "skipped": 2}},
+   "agent_over_vendor": 2.68,
+   "cases": [
+    {"shape": [4096, 64], "k": 2, "dtype": "float16", "agent_speedup": 0.5348},
+    {"shape": [8192, 64], "k": 4, "dtype": "float16", "agent_speedup": 0.3565},
+    {"shape": [16384, 128], "k": 6, "dtype": "bfloat16", "agent_speedup": 0.1664},
+    {"shape": [4096, 256], "k": 8, "dtype": "bfloat16", "agent_speedup": 0.138},
+    {"shape": [32768, 32], "k": 2, "dtype": "bfloat16", "agent_speedup": 0.4009},
+    {"shape": [2048, 512], "k": 4, "dtype": "float16", "agent_speedup": 0.2087},
+    {"shape": [65536, 16], "k": 2, "dtype": "float16", "agent_speedup": 0.3974},
+    {"shape": [8192, 128], "k": 8, "dtype": "float32", "agent_speedup": 0.0818}
+   ]
+  }
+ },
+ "unusable_scaffold_ops": {
+  "grouped_matmul": "Python wrapper only; no C++ op or registration, cannot build a benchmark",
+  "moe_re_routing": "vendor kernel fails to compile on CANN 9.1 (Adds static_assert for __bf16 / signed char)"
+ },
+ "harness_fixes": [
+  "run_cannbench: read metrics before the exit-code check; failed bench cases become fail_correctness with shape/dtype (PR #11)",
+  "bench_nonce.py: persist and re-emit the metrics payload even when the bench script exits non-zero; only a run without metrics is an error",
+  "test/bench scripts: import torch_npu explicitly; torch.device('npu') otherwise raises ModuleNotFoundError before the op runs",
+  "moe bench reference: build the expected row_idx on CPU (NPU arange(int32) returned garbage for some sizes) and synchronize the reference before launching the side-stream op"
+ ],
+ "corrections": [
+  "The earlier note that the vendor moe kernel is wrong on 2/8 bench cases was a bug in our own bench reference; vendor is 8/8."
+ ],
+ "limitations": [
+  "single model (deepseek-chat), one run per task, shared machine",
+  "official correctness cases use small shapes; the 8 large bench shapes are checked by the bench's own correctness flags",
+  "single-session measurement, not a performance commitment for 910B"
+ ]
+}

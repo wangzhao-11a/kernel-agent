@@ -26,3 +26,7 @@ jobs:
         run: python scripts/memory_selftest.py
       - name: Skill compiler self-test
         run: python scripts/skills_selftest.py
+      - name: Dream pass self-test
+        run: python scripts/dream_selftest.py
+      - name: Knowledge-store concurrency (50 consecutive runs)
+        run: python scripts/atomic_io_selftest.py --loop 50
