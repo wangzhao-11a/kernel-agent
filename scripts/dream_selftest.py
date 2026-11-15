@@ -342,29 +342,36 @@ def check_dry_run_writes_nothing(tmp):
 
 
 def check_schedule_rollback(tmp):
+    """A dream demotion must be undoable byte-for-byte by version.restore."""
+    runs_root = os.path.join(tmp, "rollback_runs")
+    os.makedirs(runs_root, exist_ok=True)
+    task = _write_small_task(tmp, "rollback_task")
+    run_dir, _meta = _make_run(tmp, task, "rollback", _GOOD_SRC, out_dir=runs_root)
+    # A real record the replay cannot reproduce, so dream really writes.
+    _replace_solution(run_dir, _SLOW_SRC)
     root = os.path.join(tmp, "kb_sched")
     store = StrategyStore(root)
-    store.strategies[store.find_by_key("online_softmax")["id"]]["confidence"] = "verified"
+    sid = store.find_by_key("online_softmax")["id"]
+    store.record_evidence(sid, os.path.basename(run_dir), "rollback_task", 1.0, "neutral",
+                          run_id=os.path.basename(run_dir), hardware="cpu", dtype="float32")
+    store.strategies[sid]["confidence"] = "verified"
     store.save()
+
+    path = os.path.join(root, "strategies.jsonl")
+    before = open(path, "rb").read()
     snap = version.snapshot(root, os.path.join(tmp, "snaps"))
-    dream(root, runs_root=os.path.join(tmp, "empty"), apply=True, device="cpu")
-    after = version.snapshot(root, os.path.join(tmp, "snaps"))
-    assert before_text(root) != after_text(root) or True
+    report = dream(root, runs_root=runs_root, apply=True, device="cpu")
+    assert report["summary"]["not_reproduced"] == 1, report
+    after = open(path, "rb").read()
+    assert after != before, "dream did not write the demotion this test relies on"
+
     version.restore(root, snap["path"])
-    restored = open(os.path.join(root, "strategies.jsonl"), encoding="utf-8").read()
-    assert "verified" in restored or restored, restored
+    restored = open(path, "rb").read()
+    assert restored == before, "version.restore did not restore the pre-dream bytes"
     # the file must still be valid JSONL
-    for line in open(os.path.join(root, "strategies.jsonl"), encoding="utf-8"):
+    for line in open(path, encoding="utf-8"):
         if line.strip():
             json.loads(line)
-
-
-def before_text(root):
-    return open(os.path.join(root, "strategies.jsonl"), encoding="utf-8").read()
-
-
-def after_text(root):
-    return before_text(root)
 
 
 def check_note_promotion(tmp):
