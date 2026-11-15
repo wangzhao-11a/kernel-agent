@@ -102,8 +102,14 @@ def _calibration_note(matched: list) -> str:
 
 def priors_block(feats: dict, hardware: str, matched: list, combos: list, attempted=(),
                  max_chars: int = 1400) -> str:
+    """Index view of the strategy priors: one line per practice, body on demand.
+
+    The full record (statement, conditions, detector, evidence) is fetched with
+    {"action":"recall","id":"stg-XXXX"}; inlining it here made priors the largest
+    of the first-turn blocks.
+    """
     lines = [
-        "## Tuning priors (retrieved from the strategy pool by condition match)",
+        "## Tuning priors — index (load a full record with {\"action\":\"recall\",\"id\":\"stg-XXXX\"})",
         "matching context: hardware=%s | op_class=%s | dtypes=%s | tags=%s" % (
             hardware or "-", feats.get("op_class") or "-",
             ",".join(feats.get("dtypes") or []), ",".join(feats.get("tags") or [])),
@@ -117,41 +123,34 @@ def priors_block(feats: dict, hardware: str, matched: list, combos: list, attemp
         stats = strategy.get("stats") or {}
         applied = int(stats.get("applied") or 0)
         succeeded = int(stats.get("succeeded") or 0)
-        ema = stats.get("ema_speedup")
-        calibration = stats.get("calibration_mae")
         marks = []
         if applied:
-            marks.append("history %d/%d ok" % (succeeded, applied))
-        if ema:
-            marks.append("measured EMA %.2fx" % ema)
-        if calibration is not None:
-            marks.append("expectation error %.2f" % calibration)
+            marks.append("hist %d/%d ok" % (succeeded, applied))
+        else:
+            marks.append("no history")
+        if stats.get("ema_speedup"):
+            marks.append("EMA %.2fx" % float(stats["ema_speedup"]))
         cond = strategy.get("conditions") or {}
         cond_bits = []
         if cond.get("hardware"):
             cond_bits.append("hw=%s" % ",".join(cond["hardware"]))
         if cond.get("dtypes"):
             cond_bits.append("dtype=%s" % ",".join(cond["dtypes"]))
-        if cond.get("refined_note"):
-            cond_bits.append("refined: %s" % cond["refined_note"])
-        statement = str(strategy["statement"])
-        if len(statement) > 100:
-            statement = statement[:100] + "…"
-        block = ["- [%s] %s" % (strategy["id"], statement)]
-        block.append("    expected ~%.2fx | %s | conditions: %s | confidence: %s%s" % (
+        statement = str(strategy.get("statement") or "")
+        if len(statement) > 60:
+            statement = statement[:60] + "…"
+        line = "- [%s] %s | expect ~%.2fx | %s | %s | %s%s" % (
+            strategy["id"], statement,
             float((strategy.get("expected") or {}).get("speedup") or 1.0),
-            "; ".join(marks) or "no history yet",
-            ", ".join(cond_bits) or "any",
-            strategy.get("confidence"),
-            " | already attempted this run" if strategy["id"] in attempted else ""))
-        extra = sum(len(line) + 1 for line in block)
-        if used + extra > max_chars:
+            "; ".join(marks),
+            ", ".join(cond_bits) or "conditions: any",
+            strategy.get("confidence") or "candidate",
+            " | already attempted this run" if strategy["id"] in attempted else "")
+        if used + len(line) + 1 > max_chars:
             break
-        lines.extend(block)
-        used += extra
+        lines.append(line)
+        used += len(line) + 1
     if combos and used < max_chars:
-        lines.append("Combination rules (practices that historically co-occurred with gains):")
-        used += len(lines[-1]) + 1
         for combo in combos[:3]:
             stats = combo.get("stats") or {}
             line = "- [%s] %s -> best measured %.2fx (applied %sx)" % (
@@ -161,10 +160,12 @@ def priors_block(feats: dict, hardware: str, matched: list, combos: list, attemp
                 break
             lines.append(line)
             used += len(line) + 1
-    lines.append("In write_solution include \"strategies\" (names or ids you applied) and "
-                 "\"expected_speedup\" (your prediction): they update this pool for later tasks.")
+    footer = ("In write_solution include \"strategies\" (names or ids you applied) and "
+              "\"expected_speedup\" (your prediction): they update this pool for later tasks.")
+    if used + len(footer) + 1 <= max_chars:
+        lines.append(footer)
     note = _calibration_note(matched)
-    if note:
+    if note and used + len(note) + 1 <= max_chars:
         lines.append(note)
     return "\n".join(lines)
 
