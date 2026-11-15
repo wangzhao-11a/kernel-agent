@@ -223,7 +223,7 @@ def run_cycle(args) -> dict:
     from rsi.dream import dream
     dream_report = dream(args.knowledge_root, runs_root=args.runs_root,
                          apply=True, allow_promote=False, device=args.device,
-                         timeout=args.timeout)
+                         timeout=args.timeout, limit=args.dream_limit)
     # Real re-evaluation, not a historical average: same holdout tasks, the same
     # runner, one score per knowledge snapshot.
     before_kb = os.path.join(cycle_dir, "kb_before")
@@ -370,6 +370,8 @@ def main(argv=None) -> int:
     ap.add_argument("--versions-root", default=version.DEFAULT_VERSIONS)
     ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--rollback-eps", type=float, default=0.01)
+    ap.add_argument("--dream-limit", type=int, default=3,
+                    help="max verified records dream replays per cycle (0 = all)")
     ap.add_argument("--holdout-eval-iters", type=int, default=4,
                     help="iterations per holdout re-evaluation run")
     ap.add_argument("--holdout-eval-seeds", type=int, default=1)

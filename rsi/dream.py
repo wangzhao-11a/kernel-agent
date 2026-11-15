@@ -247,6 +247,9 @@ def dream(root: str, runs_root: str = None, apply: bool = False,
         "summary": {"reproduced": 0, "not_reproduced": 0, "env_error": 0},
         "aborted": "",
         "env_error_ratio": 0.0,
+        "candidates": 0,
+        "replayed": 0,
+        "remaining": 0,
     }
 
     candidates = []
@@ -262,6 +265,8 @@ def dream(root: str, runs_root: str = None, apply: bool = False,
         0 if item[2].get("replay_blocked_at") else 1,
         item[2].get("last_replayed") or item[2].get("updated") or "",
     ))
+    total_candidates = len(candidates)
+    report["candidates"] = total_candidates
     if limit:
         candidates = candidates[:max(0, int(limit))]
 
@@ -290,6 +295,8 @@ def dream(root: str, runs_root: str = None, apply: bool = False,
     # verified set on a single bad cycle and there is no path back (a demoted
     # record leaves the replay set).  Env errors only mark the record for a retry.
     total = len(results)
+    report["replayed"] = total
+    report["remaining"] = max(0, total_candidates - total)
     env_errors = int(report["summary"]["env_error"])
     report["env_error_ratio"] = round(env_errors / total, 4) if total else 0.0
     aborted = bool(total and env_errors * 2 > total)
