@@ -11,6 +11,27 @@ This is the bridge the Python/triton loop was missing:
 The backend is deliberately command-driven.  It does not know how AscendC is
 compiled or how a wheel is installed; the spec authorizes the commands, exactly
 like the Python harness authorizes `run_eval`.
+
+Bench metrics contract
+----------------------
+A bench command reports its measurements on stdout as one line
+
+    CANNBENCH_METRICS {"speedup": <float>, "metric_key": "speedup", ...}
+
+(or writes the same object to the file named by CANNBENCH_METRICS_FILE).  The
+optional per-case payload is:
+
+    "cases": [
+      {"shape": [2, 4], "dtype": "float16", "dim": -1,
+       "baseline_ms": 1.0, "candidate_ms": 2.0,
+       "speedup": 0.5, "correct": true|false}
+    ]
+
+`correct` is required for every entry: it is the bench script's own correctness
+verdict for that shape (the official test cases usually cover small shapes, the
+bench covers the shapes that matter for speed).  A case without `correct` makes
+the whole payload unusable -> bench_error; a case with `correct: false` makes
+the run fail_correctness, whether or not the script exits non-zero.
 """
 from __future__ import annotations
 
@@ -417,14 +438,34 @@ def run_cannbench(spec: CannBenchSpec, files: dict | None = None,
         # the failing shapes, not "bench exited 1".
         metrics = read_metrics_file(metrics_path) or parse_metrics(
             _read_text(bench["log_path"]), nonce=nonce)
-        bad_cases = [row for row in (metrics.get("cases") or [])
-                     if row.get("correct") is False or row.get("passed") is False]
+        cases = metrics.get("cases")
+        if cases is not None and not isinstance(cases, list):
+            result["status"] = "bench_error"
+            result["error"] = "bench metrics: 'cases' must be a list, got %s" % type(cases).__name__
+            return _finish_run(result, started)
+        cases = cases or []
+        # The contract requires `correct` on every case.  Without it the harness
+        # cannot tell a wrong candidate from an unmeasured one, and silently
+        # passing is exactly what the field is here to prevent.
+        missing = [row for row in cases
+                   if not isinstance(row, dict) or "correct" not in row]
+        if missing:
+            names = ["%s/%s" % (tuple(row.get("shape") or ()), row.get("dtype"))
+                     if isinstance(row, dict) else repr(row) for row in missing[:5]]
+            result["status"] = "bench_error"
+            result["error"] = ("bench metrics: %d/%d case(s) missing the required "
+                               "'correct' field (%s%s)"
+                               % (len(missing), len(cases), ", ".join(names),
+                                  " ..." if len(missing) > 5 else ""))
+            return _finish_run(result, started)
+        bad_cases = [row for row in cases if row.get("correct") is False]
         result["bench_cases_failed"] = len(bad_cases)
         if bad_cases:
-            names = ["%s/%s" % (row.get("shape"), row.get("dtype")) for row in bad_cases[:5]]
+            names = ["%s/%s" % (tuple(row.get("shape") or ()), row.get("dtype"))
+                     for row in bad_cases[:5]]
             result["status"] = "fail_correctness"
             result["error"] = ("bench: %d/%d cases wrong (%s%s)"
-                               % (len(bad_cases), len(metrics.get("cases") or []),
+                               % (len(bad_cases), len(cases),
                                   ", ".join(names),
                                   " ..." if len(bad_cases) > 5 else ""))
             return _finish_run(result, started)

@@ -285,6 +285,91 @@ def main():
             assert result["case_summary"]["failed"] == 1, result["case_summary"]
         check("case failure -> fail_correctness", bad_case)
 
+        def bench_case_contract():
+            """The bench payload contract: correct:false fails, missing correct errors."""
+            import textwrap
+            contract_dir = os.path.join(tmp, "bench_contract")
+            os.makedirs(contract_dir, exist_ok=True)
+            for name, body in (
+                ("kernel.txt", "GOOD\n"),
+                # A placeholder the per-run overlay replaces; prepare_workspace
+                # only accepts edits for files that already exist in the package.
+                ("case.json", json.dumps({"payload": {"speedup": 1.0,
+                                                      "metric_key": "speedup",
+                                                      "cases": []}, "exit": 0})),
+                ("build.py", "print('built')\n"),
+                ("test.py", TEST_PY),
+                ("bench.py", textwrap.dedent("""
+                    import json, os, sys
+                    here = os.path.dirname(os.path.abspath(__file__))
+                    cfg = json.load(open(os.path.join(here, "case.json"), encoding="utf-8"))
+                    payload = dict(cfg["payload"])
+                    payload["nonce"] = os.environ.get("CANNBENCH_NONCE", "")
+                    path = os.environ.get("CANNBENCH_METRICS_FILE", "")
+                    if path:
+                        open(path, "w", encoding="utf-8").write(json.dumps(payload))
+                    print("CANNBENCH_METRICS " + json.dumps(payload))
+                    sys.exit(int(cfg.get("exit", 0)))
+                """)),
+            ):
+                with open(os.path.join(contract_dir, name), "w", encoding="utf-8") as fh:
+                    fh.write(body)
+            contract_spec = {
+                "id": "bench_contract", "package": contract_dir,
+                "edit_files": ["kernel.txt", "case.json"],
+                "build_command": [sys.executable, "build.py"],
+                "test_command": [sys.executable, "test.py"],
+                "bench_command": [sys.executable, "bench.py"],
+                "timeout_s": 60, "soc": "mock", "hardware": "",
+                "description": "bench case contract",
+            }
+            spec_path = os.path.join(tmp, "bench_contract_spec.json")
+            with open(spec_path, "w", encoding="utf-8") as fh:
+                json.dump(contract_spec, fh)
+            contract = load_spec(spec_path)
+
+            good_case = {"shape": [8, 16], "dtype": "float16", "dim": -1,
+                         "baseline_ms": 1.0, "candidate_ms": 0.8,
+                         "speedup": 1.25, "correct": True}
+            bad_case = dict(good_case, shape=[2, 4], candidate_ms=2.0,
+                            speedup=0.5, correct=False)
+
+            def run(label, payload):
+                return run_cannbench(
+                    contract, files={"case.json": json.dumps(payload)},
+                    work_root=os.path.join(tmp, "run_contract_" + label))
+
+            wrong_exit1 = run("wrong_exit1", {"payload": {"speedup": 0.5,
+                                                          "metric_key": "speedup",
+                                                          "cases": [bad_case]},
+                                              "exit": 1})
+            assert wrong_exit1["status"] == "fail_correctness", wrong_exit1
+            assert "(2, 4)/float16" in (wrong_exit1.get("error") or ""), wrong_exit1.get("error")
+            assert wrong_exit1["bench_cases_failed"] == 1, wrong_exit1
+
+            wrong_exit0 = run("wrong_exit0", {"payload": {"speedup": 0.5,
+                                                          "metric_key": "speedup",
+                                                          "cases": [bad_case]},
+                                              "exit": 0})
+            assert wrong_exit0["status"] == "fail_correctness", wrong_exit0
+            assert "1/1 cases wrong" in (wrong_exit0.get("error") or ""), wrong_exit0
+
+            no_correct = dict(good_case)
+            no_correct.pop("correct")
+            missing = run("missing_correct", {"payload": {"speedup": 1.0,
+                                                          "metric_key": "speedup",
+                                                          "cases": [no_correct]},
+                                              "exit": 0})
+            assert missing["status"] == "bench_error", missing
+            assert "missing the required 'correct' field" in (missing.get("error") or ""), \
+                missing.get("error")
+
+            ok = run("ok", {"payload": {"speedup": 1.25, "metric_key": "speedup",
+                                        "cases": [good_case]}, "exit": 0})
+            assert ok["status"] == "pass", ok
+        check("bench payload contract: correct:false fails, missing correct errors",
+              bench_case_contract)
+
         def build_fail():
             result = run_cannbench(spec, files={"kernel.txt": "BUILD_FAIL\n"},
                                    work_root=os.path.join(tmp, "run_buildfail"))
