@@ -990,8 +990,23 @@ class MemoryStore:
         disputed = [r for r in self.facts + self.skills
                     if r.get("status") in ("disputed", "refuted")
                     or r.get("confidence") == "refuted"]
+        # Compact records for the planner: it has to match scope, not just
+        # count, and build_audit is the only place memory is loaded there.
+        def _compact(row):
+            return {
+                "id": row.get("id"),
+                # Failures carry `signature`; facts and skills carry `statement`.
+                "statement": str(row.get("statement") or row.get("signature") or "")[:200],
+                "scope": dict(row.get("scope") or {}),
+                "stage": row.get("stage") or "",
+                "authority": row.get("authority") or "",
+                "count": int(row.get("count") or 1),
+            }
         return {
             "root": self.root,
+            "open_failure_records": [_compact(r) for r in open_failures[:50]],
+            "active_fact_records": [_compact(r) for r in self.facts
+                                    if r.get("status", "active") == "active"][:50],
             "facts": len(self.facts),
             "facts_active": sum(1 for r in self.facts if r.get("status", "active") == "active"),
             "failures": len(self.failures),

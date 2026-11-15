@@ -125,6 +125,15 @@ def load_runs(runs_root: str) -> list:
 
 
 # --------------------------------------------------------------------------- tasks
+def _scope_match():
+    """scope_match from rsi.memory, or None when the module cannot load."""
+    try:
+        from .memory import scope_match
+        return scope_match
+    except Exception:
+        return None
+
+
 def load_tasks(tasks_root: str) -> list:
     from harness.tasks import load_task
     from rsi.features import task_features
@@ -471,6 +480,42 @@ def build_plan(report: dict, top: int = 6, kind: str = "") -> list:
             forms = ["torch_fused"]
         else:
             forms = ["triton"] if op_class in KERNEL_FIRST else ["torch_fused"]
+
+        # Learning edge, planning stage: open failures and active facts are
+        # matched against this task's scope, not just counted.  A task whose
+        # known blocker is still open is worth practicing (fix it or disprove
+        # it); the facts travel with the plan row so the runner can surface them.
+        constraints, failure_hits = [], []
+        memory = report.get("memory") or {}
+        scope_match = _scope_match()
+        if scope_match is not None:
+            plan_feats = dict(task.get("features") or {})
+            plan_feats.update({
+                "op": task["name"], "op_family": op_class, "soc": "ascend-910b",
+                "dtype": task.get("dtypes") or [], "form": forms,
+            })
+            for record in memory.get("open_failure_records") or []:
+                matched, why, _match_score = scope_match(record.get("scope") or {}, plan_feats)
+                if not matched:
+                    continue
+                failure_hits.append(record.get("id"))
+                constraints.append({
+                    "kind": "failure", "id": record.get("id"),
+                    "stage": record.get("stage") or "", "why": why,
+                    "statement": record.get("statement") or "",
+                })
+            for record in memory.get("active_fact_records") or []:
+                matched, why, _match_score = scope_match(record.get("scope") or {}, plan_feats)
+                if not matched:
+                    continue
+                constraints.append({
+                    "kind": "fact", "id": record.get("id"),
+                    "statement": record.get("statement") or "", "why": why,
+                })
+        if failure_hits:
+            score += min(3.0, 1.5 * len(failure_hits))
+            reasons.append("open failure memory on this scope: %s"
+                           % ", ".join(str(item) for item in failure_hits))
         variants = ["base", "shape-x2", "dtype-bf16"]
         holdout = holdout_label(task["name"])
         synthetic = bool(task.get("synthetic"))
@@ -504,6 +549,7 @@ def build_plan(report: dict, top: int = 6, kind: str = "") -> list:
                 "best_speedup": best,
                 "last_run": last,
             },
+            "constraints": constraints,
             "protocol": {
                 "seeds": 3,
                 "forms": forms,

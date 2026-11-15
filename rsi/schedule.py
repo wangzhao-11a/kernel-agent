@@ -285,7 +285,10 @@ def run_cycle(args) -> dict:
         "seeds": args.seeds,
         "variants": variants,
         "plan": [{"task": p["task"], "path": p["path"], "score": p["score"],
-                  "synthetic": bool(p.get("synthetic")), "holdout": p["protocol"].get("holdout")}
+                  "synthetic": bool(p.get("synthetic")),
+                  "holdout": p["protocol"].get("holdout"),
+                  "reasons": list(p.get("reasons") or []),
+                  "constraints": list(p.get("constraints") or [])}
                  for p in plans],
         "runs": rows,
         "skipped": skipped,
@@ -328,6 +331,16 @@ def render_markdown(audit: dict) -> str:
         "- rollback: %s (%s)" % (
             audit["knowledge"]["rollback"].get("rolled_back"),
             audit["knowledge"]["rollback"].get("reason")),
+        "",
+        "Plan (memory constraints attached):",
+    ]
+    for row in audit["plan"][:20]:
+        bits = ", ".join("%s %s" % (item.get("kind"), item.get("id"))
+                         for item in row.get("constraints") or [])
+        lines.append("- %s (score %.2f)%s" % (
+            row["task"], float(row.get("score") or 0.0),
+            (" — " + bits) if bits else ""))
+    lines += [
         "",
         "| task | seed | variant | iters | status | speedup |",
         "| --- | --- | --- | --- | --- | --- |",

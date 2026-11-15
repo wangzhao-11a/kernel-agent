@@ -30,5 +30,7 @@ jobs:
         run: python scripts/schedule_selftest.py
       - name: First-turn memory budget self-test
         run: python scripts/first_turn_budget_selftest.py
+      - name: Planning uses memory constraints self-test
+        run: python scripts/plan_memory_selftest.py
       - name: Knowledge-store concurrency (50 consecutive runs)
         run: python scripts/atomic_io_selftest.py --loop 50
