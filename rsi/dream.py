@@ -113,6 +113,20 @@ def _outside_recorded_ci(run_dir: str, replay: dict, epsilon=None) -> bool:
     return False
 
 
+def _mark_blocked(row: dict, detail) -> dict:
+    """Environment failure: remember why, change nothing about confidence."""
+    row["replay_blocked_at"] = _now()
+    row["replay_blocked_reason"] = str(detail)[:500]
+    row["updated"] = utc_now()
+    return row
+
+
+def _clear_blocked(row: dict) -> dict:
+    if row.pop("replay_blocked_at", None) is not None or row.pop("replay_blocked_reason", None) is not None:
+        row["updated"] = utc_now()
+    return row
+
+
 def _demote(row: dict, reason: str, replay_run_id: str, replay_data) -> dict:
     """Write a demotion with provenance.  Consecutive failures -> refuted."""
     prior = int(row.get("demote_count") or 0) + 1
@@ -199,6 +213,8 @@ def dream(root: str, runs_root: str = None, apply: bool = False,
         "checked": [],
         "notes": [],
         "summary": {"reproduced": 0, "not_reproduced": 0, "env_error": 0},
+        "aborted": "",
+        "env_error_ratio": 0.0,
     }
 
     candidates = []
@@ -208,10 +224,16 @@ def dream(root: str, runs_root: str = None, apply: bool = False,
     for row in mem.skills:
         if row.get("confidence") == "verified":
             candidates.append(("skill", row.get("id"), row))
-    candidates.sort(key=lambda item: (item[2].get("last_replayed") or item[2].get("updated") or ""))
+    # Records whose last replay hit an environment error are retried first, then
+    # the ones that have not been checked for the longest time.
+    candidates.sort(key=lambda item: (
+        0 if item[2].get("replay_blocked_at") else 1,
+        item[2].get("last_replayed") or item[2].get("updated") or "",
+    ))
     if limit:
         candidates = candidates[:max(0, int(limit))]
 
+    results = []
     for kind, rid, row in candidates:
         run_id = str(row.get("run_id") or "")
         # A verified row may carry several evidence run ids; replay the latest.
@@ -222,37 +244,48 @@ def dream(root: str, runs_root: str = None, apply: bool = False,
                 run_id = str(last.get("run_id") or last.get("trajectory") or "")
         run_dir = run_id if os.path.isabs(run_id) else os.path.join(runs_root, run_id)
         if not os.path.isdir(run_dir):
-            report["checked"].append({
-                "kind": kind, "id": rid, "outcome": "env_error",
-                "detail": "run directory not found: %s" % run_dir,
-            })
-            report["summary"]["env_error"] += 1
-            continue
-        outcome, detail = _replay_one(run_dir, device, timeout)
-        entry = {"kind": kind, "id": rid, "run_dir": run_dir, "outcome": outcome,
-                 "detail": detail}
-        if outcome == "reproduced":
-            report["summary"]["reproduced"] += 1
-            if apply:
-                _keep(row, run_id, allow_promote, parent_timed=bool(detail.get("parent_timed")))
-        elif outcome == "not_reproduced":
-            report["summary"]["not_reproduced"] += 1
-            if apply:
+            outcome, detail = "env_error", "run directory not found: %s" % run_dir
+        else:
+            outcome, detail = _replay_one(run_dir, device, timeout)
+        report["summary"][outcome] += 1
+        report["checked"].append({"kind": kind, "id": rid, "run_dir": run_dir,
+                                  "outcome": outcome, "detail": detail})
+        results.append({"row": row, "run_id": run_id, "outcome": outcome,
+                        "detail": detail})
+
+    # A device that is down, a missing dependency or an unreplayable trajectory
+    # is not evidence that the memory is wrong: demoting on it would wipe the
+    # verified set on a single bad cycle and there is no path back (a demoted
+    # record leaves the replay set).  Env errors only mark the record for a retry.
+    total = len(results)
+    env_errors = int(report["summary"]["env_error"])
+    report["env_error_ratio"] = round(env_errors / total, 4) if total else 0.0
+    aborted = bool(total and env_errors * 2 > total)
+    report["aborted"] = "environment" if aborted else ""
+
+    if apply:
+        for result in results:
+            row, outcome, detail = result["row"], result["outcome"], result["detail"]
+            if outcome == "env_error":
+                _mark_blocked(row, detail)
+                continue
+            _clear_blocked(row)
+            if aborted:
+                # More than half of the replays failed for environmental
+                # reasons: this round says nothing about any record's content.
+                continue
+            if outcome == "reproduced":
+                _keep(row, result["run_id"], allow_promote,
+                      parent_timed=bool(detail.get("parent_timed")))
+            else:
                 speedups = []
                 for res in (detail.get("results") or []):
                     value = res.get("replay_speedup")
                     if value is not None:
                         speedups.append(value)
                 reason = ("replay did not reproduce: run %s, replayed speedups %s"
-                          % (run_id, speedups))
-                _demote(row, reason, run_id, detail)
-        else:
-            report["summary"]["env_error"] += 1
-            if apply:
-                _demote(row, "replay environment error: %s" % detail, run_id, detail)
-        report["checked"].append(entry)
-
-    if apply:
+                          % (result["run_id"], speedups))
+                _demote(row, reason, result["run_id"], detail)
         store.save()
         mem.save()
 
