@@ -153,48 +153,80 @@ def _keep(row: dict, replay_run_id: str, allow_promote: bool, parent_timed: bool
 
 
 def _note_outcomes(notes: list, runs_root: str):
-    """Count independent successful/failed runs that mention each note id."""
-    outcomes = {note["id"]: {"success": set(), "failure": set()} for note in notes}
-    if not notes:
+    """Which runs actually showed each note, and how the showing attempt ended.
+
+    Attribution reads the attempt's own `notes_shown` list (the ids that were in
+    the index the model received), not a substring search over the run: the id
+    appears nowhere in a real attempt row, so the old text search always
+    produced an empty report.
+    """
+    ids = {note["id"] for note in notes}
+    outcomes = {nid: {"success": set(), "failure": set()} for nid in ids}
+    if not ids:
         return outcomes
     for run_dir, attempts in _iter_attempts(runs_root):
         run_id = os.path.basename(run_dir)
-        text = json.dumps(attempts, ensure_ascii=False)
-        status = "success" if any(a.get("status") in ("pass", "pass_unstable") for a in attempts) else "failure"
-        for note in notes:
-            if note["id"] in text:
-                outcomes[note["id"]][status].add(run_id)
+        passed, failed = set(), set()
+        for attempt in attempts:
+            shown = {str(x) for x in (attempt.get("notes_shown") or []) if str(x) in ids}
+            if not shown:
+                continue
+            if attempt.get("status") in ("pass", "pass_unstable"):
+                passed |= shown
+            else:
+                failed |= shown
+        # A run is success evidence for a note only when an attempt that showed
+        # it passed; it is failure evidence only when no showing attempt passed.
+        for nid in passed:
+            outcomes[nid]["success"].add(run_id)
+        for nid in failed - passed:
+            outcomes[nid]["failure"].add(run_id)
     return outcomes
 
 
 def _review_notes(mem: MemoryStore, runs_root: str, apply: bool) -> list:
-    """Promote notes seen in >=2 successful runs; refute notes only seen in failures."""
+    """Promote notes seen in >=2 successful runs; refute notes only seen in failures.
+
+    The note update and the fact it promotes into must happen in one memory
+    transaction: add_fact() opens its own transaction, which reloads from disk
+    and used to discard the in-memory note change (the note landed as
+    candidate/no status even though the report said "promote").
+    """
     outcomes = _note_outcomes(mem.notes, runs_root)
     report = []
-    for note in mem.notes:
-        succ = outcomes[note["id"]]["success"]
-        fail = outcomes[note["id"]]["failure"]
+    for note in list(mem.notes):
+        nid = note["id"]
+        succ = outcomes[nid]["success"]
+        fail = outcomes[nid]["failure"]
         action = None
-        if len(succ) >= 2:
+        if len(succ) >= 2 and note.get("status") != "active":
             action = "promote"
-            note["confidence"] = "candidate"
-            note["status"] = "active"
-            if apply:
+        elif len(fail) >= 3 and not succ and note.get("confidence") != "refuted":
+            action = "refute"
+        if not action:
+            continue
+        report.append({"id": nid, "action": action,
+                       "success_runs": sorted(succ), "failure_runs": sorted(fail)})
+        if not apply:
+            continue
+        with mem.transaction():
+            current = next((row for row in mem.notes if row.get("id") == nid), None)
+            if current is None:
+                continue
+            current["updated"] = utc_now()
+            if action == "promote":
+                current["status"] = "active"
+                current["confidence"] = "candidate"
                 mem.add_fact({
-                    "statement": note["statement"],
-                    "scope": note.get("scope") or {},
+                    "statement": current["statement"],
+                    "scope": current.get("scope") or {},
                     "confidence": "candidate",
                     "status": "active",
                     "authority": "experiment",
                     "type": "process_note",
                 })
-        elif len(fail) >= 3 and not succ:
-            action = "refute"
-            note["confidence"] = "refuted"
-        if action:
-            note["updated"] = utc_now()
-            report.append({"id": note["id"], "action": action,
-                           "success_runs": sorted(succ), "failure_runs": sorted(fail)})
+            else:
+                current["confidence"] = "refuted"
     return report
 
 
