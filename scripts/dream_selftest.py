@@ -374,28 +374,87 @@ def check_schedule_rollback(tmp):
             json.loads(line)
 
 
+def _run_agent(tmp, name, out_dir, knowledge_root, task_path, responses, before):
+    """Run agent.loop with a replay file; return the new run directory."""
+    replay = os.path.join(tmp, name + ".json")
+    with open(replay, "w", encoding="utf-8") as fh:
+        json.dump({"responses": responses}, fh)
+    proc = subprocess.run([
+        sys.executable, "-m", "agent.loop", "--task", task_path, "--provider", "replay",
+        "--replay-file", replay, "--device", "cpu", "--knowledge-root", knowledge_root,
+        "--out-dir", out_dir, "--max-iters", "4", "--target-speedup", "0.5",
+        "--timeout", "300", "--profiler", "off", "--no-distill",
+    ], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=900)
+    assert proc.returncode == 0, proc.stdout[-1500:] + proc.stderr[-1000:]
+    new = sorted(set(os.listdir(out_dir)) - before)
+    assert len(new) == 1, new
+    return os.path.join(out_dir, new[0])
+
+
+def _attempts(run_dir):
+    return [json.loads(line) for line in
+            open(os.path.join(run_dir, "attempts.jsonl"), encoding="utf-8") if line.strip()]
+
+
 def check_note_promotion(tmp):
+    """A note shown in two successful real runs is promoted, exactly once."""
     root = os.path.join(tmp, "kb_notes")
+    runs_root = os.path.join(tmp, "note_runs")
+    os.makedirs(runs_root, exist_ok=True)
+    task = os.path.join(ROOT, "tasks", "level1", "softmax.py")
+    good = "import torch\n\n\ndef run(x):\n    return torch.softmax(x, dim=-1)\n"
+
+    # Run 1: the agent writes the note and passes.  The note is not in that
+    # run's index (it was created after the prompt), so it cannot credit itself.
+    writer = _run_agent(tmp, "note_writer", runs_root, root, task, [
+        {"action": "note", "statement": "row-major softmax is launch-bound on cpu",
+         "trigger": "small rows"},
+        {"action": "write_solution", "content": good, "strategies": [],
+         "expected_speedup": 1.0},
+        {"action": "finish", "summary": "write note"},
+    ], set())
+    shown_runs = []
+    for name in ("note_show_a", "note_show_b"):
+        before = set(os.listdir(runs_root))
+        shown_runs.append(_run_agent(tmp, name, runs_root, root, task, [
+            {"action": "write_solution", "content": good, "strategies": [],
+             "expected_speedup": 1.0},
+            {"action": "finish", "summary": name},
+        ], before))
+
     mem = MemoryStore(root)
-    mem.add_note({"statement": "useful inference", "trigger": "always",
-                  "scope": {"soc": ["cpu"]}, "run_id": "run-a"})
-    mem.add_note({"statement": "useful inference 2", "trigger": "always",
-                  "scope": {"soc": ["cpu"]}, "run_id": "run-b"})
-    # two successful runs mention the note
-    runs_root = os.path.join(tmp, "runs_notes")
-    for name in ("run-a", "run-b"):
-        run_dir = os.path.join(runs_root, name)
-        os.makedirs(run_dir, exist_ok=True)
-        with open(os.path.join(run_dir, "attempts.jsonl"), "w", encoding="utf-8") as fh:
-            fh.write(json.dumps({"iter": 1, "status": "pass", "note": "n-0001"}) + "\n")
-            fh.write(json.dumps({"iter": 2, "status": "pass", "note": "n-0002"}) + "\n")
+    assert len(mem.notes) == 1, mem.notes
+    note_id = mem.notes[0]["id"]
+    writer_attempts = _attempts(writer)
+    assert writer_attempts and note_id in writer_attempts[-1]["notes_written"], writer_attempts[-1]
+    assert note_id not in writer_attempts[-1]["notes_shown"], writer_attempts[-1]
+    for run_dir in shown_runs:
+        rows = _attempts(run_dir)
+        assert rows and note_id in rows[-1]["notes_shown"], (run_dir, rows[-1])
+
     report = dream(root, runs_root=runs_root, apply=True, device="cpu")
-    assert report["notes"], report
-    actions = {row["action"] for row in report["notes"]}
-    assert "promote" in actions, report["notes"]
-    # Re-load the store: dream() writes through its own MemoryStore instance.
+    promote = [row for row in report["notes"] if row["action"] == "promote"]
+    assert promote and promote[0]["id"] == note_id, report["notes"]
+    assert len(promote[0]["success_runs"]) == 2, promote[0]
+    assert os.path.basename(writer) not in promote[0]["success_runs"], promote[0]
+
+    # Re-load from disk: the status change must have survived add_fact()'s
+    # transaction reload (it used to be overwritten, leaving candidate/None).
     mem2 = MemoryStore(root)
-    assert any(f.get("statement") == "useful inference" for f in mem2.facts), mem2.facts
+    note = next(row for row in mem2.notes if row["id"] == note_id)
+    assert note["status"] == "active", note
+    assert note["confidence"] == "candidate", note
+    assert any(f.get("statement") == "row-major softmax is launch-bound on cpu"
+               for f in mem2.facts), mem2.facts
+
+    # The same evidence must not promote the same note again on the next pass.
+    second = dream(root, runs_root=runs_root, apply=True, device="cpu")
+    assert not [row for row in second["notes"]
+                if row["action"] == "promote" and row["id"] == note_id], second["notes"]
+    facts = [f for f in MemoryStore(root).facts
+             if f.get("statement") == "row-major softmax is launch-bound on cpu"]
+    assert len(facts) == 1, facts
 
 
 def main():

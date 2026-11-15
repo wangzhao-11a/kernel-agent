@@ -276,6 +276,9 @@ def main(argv=None) -> int:
         # mechanics-only run: file failures under cpu, not the claimed NPU scope
         mem_write_features["soc"] = "cpu"
     memory_block = mem.context_index(mem_features, kinds=("fact", "failure", "skill")) if mem else ""
+    # The note ids actually present in the injected index (the block is capped,
+    # so the list has to come from the rendered text, not from mem.notes).
+    notes_shown = re.findall(r"\[NOTE (n-\d+)\]", memory_block or "")
     kb_cards = retrieve_cards(args.kb_root, feats, top_k=args.kb_cards, required_form=form) if use_rsi else []
     kb_block = render_candidates(kb_cards)
     kb_auto = None
@@ -288,6 +291,7 @@ def main(argv=None) -> int:
                         "```markdown\n" + body + "\n```")
     kb_reads = []
     note_count = 0
+    notes_written = []
     attempted_ids = set()
 
     api_key = llm_mod.resolve_api_key(provider, explicit=args.api_key or "", env_name=api_key_env)
@@ -425,6 +429,8 @@ def main(argv=None) -> int:
             "exemplars_used": [row["id"] for row in exemplars],
             "uses_triton": bool((result.get("solution_features") or {}).get("uses_triton")),
             "kb_reads": list(dict.fromkeys(kb_reads)),
+            "notes_shown": list(notes_shown),
+            "notes_written": list(notes_written),
             "calibration_error": (round(abs(expected - measured), 4) if expected is not None else None),
             "profile": profile_meta,
             "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -563,6 +569,7 @@ def main(argv=None) -> int:
                         "run_id": run_name,
                     })
                     note_count += 1
+                    notes_written.append(row["id"])
                     log("note", json.dumps(row, ensure_ascii=False),
                         meta={"iteration": iteration, "id": row.get("id")})
                     message = ("NOTE RECORDED %s (candidate). It will be reviewed by the dream pass; "
