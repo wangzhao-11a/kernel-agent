@@ -166,6 +166,12 @@ def _score(card: dict, feats: dict, required_form: str = "") -> float:
             score += 0.8
         elif card.get("id", "").startswith("knowledge/ops/"):
             score += 0.3
+    elif required_form == "ascendc":
+        # AscendC tasks must not be steered toward triton-only recipes.
+        if "ascendc" in text or "/ops/ascendc" in card.get("id", "").lower():
+            score += 0.8
+        if "triton" in text:
+            score -= 0.6
     return score
 
 
@@ -201,6 +207,39 @@ def render_candidates(cards: list, max_desc: int = 220) -> str:
                                         ",".join(card.get("platforms") or [])]))
         lines.append("%s\n    %s%s" % (bits[0], desc, ("  [" + meta + "]") if meta else ""))
     return "\n".join(lines)
+
+
+def search_cards(kb_root: str, query: str, top_k: int = 4,
+                 platforms=("a2", "a3"), min_score: float = 0.0) -> list:
+    """Agent-driven free-text search over the same card index.
+
+    This is the tool behind `{"action":"kb_search","query":"..."}`.  It scores
+    title/description/tags/id/excerpt by query-token coverage, so the agent can
+    ask for "32B alignment SwiGLU" instead of only accepting harness-selected cards.
+    """
+    if not kb_root or not os.path.isdir(kb_root) or top_k <= 0:
+        return []
+    tokens = [t for t in re.split(r"[\s,;:/|]+", str(query or "").lower()) if len(t) >= 2]
+    if not tokens:
+        return []
+    scored = []
+    for card in load_index(kb_root):
+        if not _platform_ok(card, platforms):
+            continue
+        text = " ".join([card.get("title", ""), card.get("description", ""),
+                         " ".join(card.get("tags") or []), card.get("id", ""),
+                         card.get("excerpt", "")]).lower()
+        hits = sum(1 for token in tokens if token in text)
+        if not hits:
+            continue
+        score = hits / float(len(tokens))
+        if str(query).lower() in text:
+            score += 1.0
+        if score < min_score:
+            continue
+        scored.append((card, score))
+    scored.sort(key=lambda item: -item[1])
+    return [card for card, _score_value in scored[:top_k]]
 
 
 def read_card(kb_root: str, card_id: str, max_chars: int = 6000) -> str:

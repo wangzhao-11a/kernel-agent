@@ -20,6 +20,8 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Core self-test (includes adversarial cheat regression)
         run: python scripts/self_test.py
+      - name: CannBench harness self-test
+        run: python scripts/cannbench_selftest.py
       - name: Memory self-test
         run: python scripts/memory_selftest.py
       - name: Skill compiler self-test
