@@ -1,0 +1,79 @@
+{
+ "date": "2026-11-19",
+ "device": "Ascend910B4-1",
+ "host": "m18 kylin10-6018",
+ "container": "deepinfer-real",
+ "cann": "9.1.0",
+ "torch": "2.10.0+cpu",
+ "torch_npu": "2.10.0.post4",
+ "model": "kimi-k3.1-pro-highspeed",
+ "endpoint": "https://api.kimi.com/coding (Anthropic Messages)",
+ "comparison_model": "deepseek-chat (historical runs, see 20261108-eval.json / 20261112-highlevel.json)",
+ "method": "official-style correctness cases + command bench, 3 rounds, median, bootstrap 95% CI; final solution independently re-evaluated",
+ "tasks": {
+  "add": {
+   "correctness_agent": "12/12",
+   "correctness_vendor": "12/12",
+   "vendor": {"speedup": 0.8322, "speedup_ci": [0.7839, 0.8651]},
+   "agent_final": {"speedup": 0.9653, "speedup_ci": [0.9645, 1.0441],
+                   "iterations": 4, "unstable_cases": 5},
+   "agent_over_vendor": 1.16,
+   "deepseek_final": {"speedup": 1.0113, "speedup_ci": [0.8811, 1.0430]}
+  },
+  "kv_cache_append": {
+   "correctness_agent": "8/8",
+   "correctness_vendor": "8/8",
+   "vendor": {"speedup": 0.0657, "speedup_ci": [0.063, 0.0728]},
+   "agent_final": {"speedup": 2.9887, "speedup_ci": [2.8624, 3.0303],
+                   "total_speedup": 2.7038, "worst_speedup": 1.6804,
+                   "baseline_ms": 1.234444, "candidate_ms": 0.45656,
+                   "iterations": 6},
+   "agent_over_vendor": 45.5,
+   "deepseek_final": {"speedup": 1.2334, "speedup_ci": [1.2236, 1.2754],
+                      "worst_speedup": 0.3995},
+   "cases": [
+    {"shape": [1, 1024, 8, 128, 128], "dtype": "float16", "agent_speedup": 4.7752},
+    {"shape": [1, 2048, 8, 128, 256], "dtype": "float16", "agent_speedup": 3.0959},
+    {"shape": [2, 1024, 8, 128, 256], "dtype": "bfloat16", "agent_speedup": 2.6227},
+    {"shape": [1, 4096, 4, 128, 512], "dtype": "bfloat16", "agent_speedup": 2.0804},
+    {"shape": [8, 512, 8, 64, 512], "dtype": "float16", "agent_speedup": 2.557},
+    {"shape": [4, 1024, 16, 64, 256], "dtype": "float16", "agent_speedup": 2.6821},
+    {"shape": [1, 8192, 2, 128, 1024], "dtype": "bfloat16", "agent_speedup": 1.6804},
+    {"shape": [2, 2048, 8, 64, 128], "dtype": "bfloat16", "agent_speedup": 4.8474}
+   ]
+  },
+  "moe_gating_top_k_softmax": {
+   "correctness_agent": "8/8",
+   "correctness_vendor": "8/8",
+   "vendor": {"speedup": 0.0871, "speedup_ci": [0.0867, 0.0875]},
+   "agent_final": {"speedup": 0.1106, "speedup_ci": [0.1086, 0.1113],
+                   "total_speedup": 0.112248, "worst_speedup": 0.0231,
+                   "baseline_ms": 2.687512, "candidate_ms": 23.942638,
+                   "iterations": 11},
+   "agent_over_vendor": 1.27,
+   "deepseek_final": {"speedup": 0.2424, "speedup_ci": [0.2399, 0.2437],
+                      "worst_speedup": 0.0818},
+   "cases": [
+    {"shape": [4096, 64], "k": 2, "dtype": "float16", "agent_speedup": 0.4141},
+    {"shape": [8192, 64], "k": 4, "dtype": "float16", "agent_speedup": 0.1804},
+    {"shape": [16384, 128], "k": 6, "dtype": "bfloat16", "agent_speedup": 0.0527},
+    {"shape": [4096, 256], "k": 8, "dtype": "bfloat16", "agent_speedup": 0.0331},
+    {"shape": [32768, 32], "k": 2, "dtype": "bfloat16", "agent_speedup": 0.3258},
+    {"shape": [2048, 512], "k": 4, "dtype": "float16", "agent_speedup": 0.0694},
+    {"shape": [65536, 16], "k": 2, "dtype": "float16", "agent_speedup": 0.3462},
+    {"shape": [8192, 128], "k": 8, "dtype": "float32", "agent_speedup": 0.0231}
+   ]
+  }
+ },
+ "limitations": [
+  "one run per task per model, shared machine",
+  "small-shape official correctness cases; large-shape bench with its own correctness flags",
+  "add bench is noisy (5 unstable cases), so small add differences are not meaningful",
+  "single-session measurements, not a performance commitment for 910B"
+ ],
+ "result_paths_m18": {
+  "vendor": "/data2/kernel-agent/cb_results/vendor_{add,kv,moe}_kimi_base.json",
+  "agent": "/data2/kernel-agent/cb_results/agent_{add,kv,moe}_kimi_final3.json",
+  "runs": "/data2/kernel-agent/cb_eval/{add,kv,moe}_kimi_runs/"
+ }
+}
